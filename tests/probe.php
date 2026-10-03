@@ -30,6 +30,8 @@ $out = match ( $check ) {
 	'mail'      => var_export( class_exists( 'MailPoet\Thing' ) || class_exists( 'Mailchimp_Thing' ) || class_exists( 'MainWP\Thing' ), true ) . ' ' . var_export( null === Mai_Package_Loader::discovered(), true ),
 	'info-twice' => Mai\Demo\Info::VERSION . ' ' . ( in_array( ( new ReflectionClass( 'Mai_Package_Loader' ) )->getStaticPropertyValue( 'autoloader' ), spl_autoload_functions(), true ) ? 'still registered' : 'takeover' ),
 	'nope-then-info' => var_export( class_exists( 'Mai\Demo\Nope' ), true ) . ' ' . Mai\Demo\Info::VERSION,
+	'takeover-broken' => Mai\Demo\Info::VERSION . ' ' . ( str_contains( implode( '|', Mai_Package_Loader::rejected() ), 'did not return an autoloader' ) ? 'recorded' : 'missing' ),
+	'mix'       => Mai\Demo\Sub\Deep::VERSION . ' ' . ( str_contains( implode( '|', Mai_Package_Loader::rejected() ), 'split across two versions' ) ? 'recorded' : 'none' ),
 	'info-deep' => Mai\Demo\Info::VERSION . ' ' . Mai\Demo\Sub\Deep::VERSION,
 	'rejected'  => ( static function (): string { class_exists( 'Mai\Demo\Info' ); $reasons = array_values( Mai_Package_Loader::rejected() ); sort( $reasons ); return implode( '|', $reasons ); } )(),
 	'non-mai'   => var_export( class_exists( 'Acme\Thing' ), true ) . ' ' . var_export( null === Mai_Package_Loader::discovered(), true ),

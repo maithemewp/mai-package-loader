@@ -80,6 +80,16 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		 */
 		private static array $rejected = [];
 
+		/** Set once Composer's list of vendor folders turned out to be missing. */
+		private static bool $noRegistry = false;
+
+		/**
+		 * Libraries checked for classes an old bootstrap already loaded.
+		 *
+		 * @var array<string, true>
+		 */
+		private static array $mixChecked = [];
+
 		/** Set while discovery runs, so anything it triggers cannot restart it. */
 		private static bool $discovering = false;
 
@@ -115,6 +125,12 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 
 			self::hook( 'muplugins_loaded', $refresh, PHP_INT_MIN );
 			self::hook( 'setup_theme', $refresh, PHP_INT_MAX );
+
+			// Without Composer's list, a new vendor folder is not noticed on
+			// each class request, so these two stages look again too. With
+			// the list they find nothing new and cost almost nothing.
+			self::hook( 'plugins_loaded', $refresh, PHP_INT_MIN );
+			self::hook( 'after_setup_theme', $refresh, PHP_INT_MIN );
 		}
 
 		/**
@@ -233,11 +249,15 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 					// dropped.
 					if ( $prune && [] !== $lacking ) {
 						foreach ( $lacking as $gone => $missing ) {
-							self::$rejected[ $copies[ $gone ]['dir'] . '/' . self::DECLARATION ] = 'a file an older copy has is missing: ' . $missing;
+							self::reject( $copies[ $gone ]['dir'] . '/' . self::DECLARATION, 'it lacks ' . $missing . ', which an older copy has, so it was dropped for the rest of this request' );
 							unset( self::$libraries[ $name ][ $gone ] );
 						}
 
 						self::$libraries[ $name ] = array_values( self::$libraries[ $name ] );
+					}
+
+					if ( $prune ) {
+						self::checkMix( $name, self::$libraries[ $name ] );
 					}
 
 					require $file;
@@ -288,6 +308,13 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 				self::$discovering = false;
 			}
 
+			if ( self::$noRegistry ) {
+				// Recorded, not logged: it works, and a log line on every page of
+				// every site running an old plugin would teach people to ignore
+				// the log.
+				self::note( 'Composer', 'the first Composer autoloader loaded is from Composer 1, which keeps no list of vendor folders, so they were found from each plugin\'s ComposerAutoloaderInit class instead', false );
+			}
+
 			self::takeOver();
 		}
 
@@ -329,13 +356,19 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 				return;
 			}
 
+			$file = $newest . '/' . self::TAKEOVER;
+
 			try {
-				$next = ( static fn( string $path ): mixed => include $path )( $newest . '/' . self::TAKEOVER );
-			} catch ( Throwable ) {
+				$next = ( static fn( string $path ): mixed => include $path )( $file );
+			} catch ( Throwable $e ) {
+				self::reject( $file, 'it threw ' . $e::class . ': ' . $e->getMessage() . ', so this older loader carried on' );
+
 				return;
 			}
 
 			if ( ! is_callable( $next ) ) {
+				self::reject( $file, 'it did not return an autoloader, so this older loader carried on' );
+
 				return;
 			}
 
@@ -397,24 +430,57 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 			return array_keys( $unique );
 		}
 
-		/** Every vendor folder Composer has registered a loader for. */
+		/**
+		 * Every vendor folder Composer has loaded, and always this loader's own.
+		 *
+		 * Composer 2 keeps a list. Composer 1's ClassLoader has none, and when
+		 * a Composer 1 plugin loads first its ClassLoader is the one every
+		 * plugin shares, so the list is missing for the whole request. Each
+		 * plugin's generated ComposerAutoloaderInit class still lives in its
+		 * vendor/composer folder, under either version, so the folders are
+		 * found from those instead.
+		 *
+		 * @return array<int, string>
+		 */
 		private static function composerVendors(): array {
-			if ( ! class_exists( self::COMPOSER, false ) || ! method_exists( self::COMPOSER, 'getRegisteredLoaders' ) ) {
-				return [];
+			$vendors = [ dirname( __DIR__, 2 ) ];
+
+			if ( self::hasRegistry() ) {
+				foreach ( array_keys( ( self::COMPOSER )::getRegisteredLoaders() ) as $vendor ) {
+					$vendors[] = rtrim( (string) $vendor, '/' );
+				}
+
+				return $vendors;
 			}
 
-			return array_map(
-				static fn( $vendor ): string => rtrim( (string) $vendor, '/' ),
-				array_keys( ( self::COMPOSER )::getRegisteredLoaders() ),
-			);
+			self::$noRegistry = true;
+
+			foreach ( get_declared_classes() as $class ) {
+				if ( str_starts_with( $class, 'ComposerAutoloaderInit' ) ) {
+					$file = ( new ReflectionClass( $class ) )->getFileName();
+
+					if ( is_string( $file ) ) {
+						$vendors[] = dirname( $file, 2 );
+					}
+				}
+			}
+
+			return $vendors;
 		}
 
+		/**
+		 * How many vendor folders Composer has registered, to notice new ones
+		 * cheaply on every class request. Without Composer's list, finding
+		 * folders means reading every declared class, too costly to do per
+		 * request for a class, so it stays constant and the stage hooks look
+		 * again instead.
+		 */
 		private static function composerCount(): int {
-			if ( ! class_exists( self::COMPOSER, false ) || ! method_exists( self::COMPOSER, 'getRegisteredLoaders' ) ) {
-				return 0;
-			}
+			return self::hasRegistry() ? count( ( self::COMPOSER )::getRegisteredLoaders() ) : 0;
+		}
 
-			return count( ( self::COMPOSER )::getRegisteredLoaders() );
+		private static function hasRegistry(): bool {
+			return class_exists( self::COMPOSER, false ) && method_exists( self::COMPOSER, 'getRegisteredLoaders' );
 		}
 
 		/**
@@ -554,7 +620,7 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 			}
 
 			if ( ! is_array( $installed ) ) {
-				self::$rejected[ $record ] = 'Composer\'s record could not be read';
+				self::reject( $record, 'Composer\'s record of installed packages could not be read' );
 
 				return [];
 			}
@@ -641,7 +707,7 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 			try {
 				$data = ( static fn( string $path ): mixed => include $path )( $file );
 			} catch ( Throwable $e ) {
-				return self::reject( $file, 'it threw ' . $e::class );
+				return self::reject( $file, 'it threw ' . $e::class . ': ' . $e->getMessage() );
 			}
 
 			if ( ! is_array( $data ) ) {
@@ -705,6 +771,68 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 			self::$rejected[ $file ] = $reason;
 
 			return null;
+		}
+
+		/**
+		 * Records something the site should know that is not a skipped copy,
+		 * and logs it when debugging, once per request, if it can go wrong.
+		 */
+		private static function note( string $key, string $message, bool $log = true ): void {
+			if ( $log && ! isset( self::$rejected[ $key ] ) && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+				error_log( sprintf( 'Mai Package Loader: %s.', $message ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			}
+
+			self::$rejected[ $key ] = $message;
+		}
+
+		/**
+		 * Warns once per library when an old copy's own bootstrap already
+		 * loaded some of its classes, before this loader existed.
+		 *
+		 * Those stay at the old version for the request, and the rest come
+		 * from the newest copy, so a newer method can be missing. It only
+		 * happens while old copies are still bundled somewhere, and nothing
+		 * else would say so.
+		 *
+		 * @param array<int, array<string, mixed>> $copies
+		 */
+		private static function checkMix( string $name, array $copies ): void {
+			if ( isset( self::$mixChecked[ $name ] ) || [] === $copies ) {
+				return;
+			}
+
+			self::$mixChecked[ $name ] = true;
+
+			$dirs = array_column( $copies, 'dir' );
+
+			// Only this library's own names. One preg_grep() over the declared
+			// classes, rather than a PHP loop across the two thousand or so a
+			// WordPress page has by now.
+			$loaded = array_keys( array_filter( $copies[0]['classes'], static fn( $file, string $class ): bool => class_exists( $class, false ), ARRAY_FILTER_USE_BOTH ) );
+
+			if ( null !== $copies[0]['namespace'] ) {
+				$loaded = array_merge( $loaded, preg_grep( '/^' . preg_quote( $copies[0]['namespace'], '/' ) . '/', get_declared_classes() ) ?: [] );
+			}
+
+			foreach ( $loaded as $declared ) {
+				$file = ( new ReflectionClass( $declared ) )->getFileName();
+
+				if ( ! is_string( $file ) ) {
+					continue;
+				}
+
+				$real = realpath( $file ) ?: $file;
+
+				foreach ( $dirs as $dir ) {
+					if ( str_starts_with( $real, $dir . '/' ) ) {
+						continue 2;
+					}
+				}
+
+				self::note( $name . ' mixed', sprintf( '%s was already loaded from %s, an older copy with its own bootstrap, so %s is split across two versions for this request', $declared, $file, $name ) );
+
+				return;
+			}
 		}
 
 		/**

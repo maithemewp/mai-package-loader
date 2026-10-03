@@ -17,6 +17,10 @@ make_loader() {
 	sed -i.bak "s/^\([[:space:]]*\)public const VERSION = '[^']*';/\1public const VERSION = '$version';/" "$dir/init.php"
 	rm -f "$dir/init.php.bak"
 
+	if [ "${3:-}" = "takeover-broken" ]; then
+		echo "<?php return 'not an autoloader';" > "$dir/takeover.php"
+	fi
+
 	if [ "${3:-}" = "takeover" ]; then
 		cat > "$dir/takeover.php" <<'PHP'
 <?php

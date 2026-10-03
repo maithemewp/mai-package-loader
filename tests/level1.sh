@@ -52,6 +52,7 @@ make_loader loader-100 1.0.0
 make_loader loader-110 1.1.0
 make_loader loader-120-takeover 1.2.0 takeover
 make_loader loader-090-takeover 0.9.0 takeover
+make_loader loader-130-broken 1.3.0 takeover-broken
 
 make_lib lib-100 1.0.0
 make_lib lib-200 2.0.0
@@ -84,6 +85,7 @@ make_plugin p-newline loader-100 1.0.0 lib-900-newline maithemewp/mai-demo 9.0.0
 make_plugin p-wrongpkg loader-100 1.0.0 lib-900-wrongpkg maithemewp/mai-other 9.0.0
 make_plugin p-takeover loader-120-takeover 1.2.0 lib-200 maithemewp/mai-demo 2.0.0
 make_plugin p-takeover-old loader-090-takeover 0.9.0 lib-200 maithemewp/mai-demo 2.0.0
+make_plugin p-takeover-broken loader-130-broken 1.3.0 lib-200 maithemewp/mai-demo 2.0.0
 make_plugin g-a loader-100 1.0.0 glob-100 maithemewp/mai-demo-global 1.0.0
 make_plugin g-b loader-100 1.0.0 glob-400 maithemewp/mai-demo-global 4.0.0
 make_plugin p-old loader-100 1.0.0 old-250 maithemewp/mai-demo 2.5.0
@@ -136,6 +138,8 @@ echo "Living alongside an old bootstrap"
 expect "old copy loaded first, newer copy wins"    "3.0.0" info p-old p-b
 expect "old copy loaded last, newer copy wins"     "3.0.0" info p-b p-old
 expect "old bootstrap already loaded the class"    "2.5.0" info p-old-eager p-b
+expect "and the split across two versions is recorded" "3.0.0 recorded" mix p-old-eager p-b
+expect "nothing is recorded when there is no split"     "3.0.0 none" mix p-a p-b
 
 echo
 echo "Without Composer's install record"
@@ -149,6 +153,7 @@ expect "newer loader first, same answer"           "3.0.0" info p-loader110 p-a 
 expect "a newer loader with takeover.php takes over" "takeover" info p-a p-takeover p-b
 expect "only once, and the old one steps aside"      "takeover takeover" info-twice p-a p-takeover p-b
 expect "an older loader's takeover.php is ignored"   "3.0.0" info p-a p-takeover-old p-b
+expect "a takeover.php that returns no autoloader is recorded, and the old loader carries on" "3.0.0 recorded" takeover-broken p-a p-takeover-broken p-b
 
 echo
 [ "$failed" -eq 0 ] && echo "All checks passed." || echo "FAILED"

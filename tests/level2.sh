@@ -132,6 +132,13 @@ install_fixtures() {
 		# development usually are.
 		make_plugin "$core/wp-content/real-sym" loader 1.0.0 lib-3.0.0 maithemewp/mai-demo 3.0.0
 		mkdir -p "$plugins/bbb-includer"
+
+		# Composer 1's autoloader, from a real plugin built with it. Loaded
+		# first, its ClassLoader is shared by every plugin, and it keeps no
+		# list of vendor folders.
+		mkdir -p "$plugins/aaaa-composer1"
+		cp -R "$ROOT/tests/fixtures/composer1/vendor" "$plugins/aaaa-composer1/"
+		printf "<?php\n/**\n * Plugin Name: aaaa-composer1\n */\nrequire_once __DIR__ . '/vendor/autoload.php';\n" > "$plugins/aaaa-composer1/aaaa-composer1.php"
 	)
 
 	for plugin in aaa-early zzz-newest mmm-inactive ppp-activating qqq-later rrr-eager net-wide; do
@@ -348,6 +355,15 @@ expect "the active theme's copy is seen too" "7.5.0" early
 
 configure "$CORE" demo-odd demo-odd aaa-early zzz-newest
 expect "a theme's copy outside vendor/ is used once the theme has loaded" "7.8.0" deep
+
+echo
+echo "A Composer 1 plugin loading first"
+configure "$CORE" twentytwentyfive twentytwentyfive aaaa-composer1 zzz-newest
+expect "a library first used after plugins load is still found" "3.0.0" info
+configure "$CORE" twentytwentyfive twentytwentyfive aaaa-composer1 aaa-early bbb-includer zzz-newest
+expect "and one loaded later from outside any plugin folder" "7.2.0" deep
+configure "$CORE" demo-odd demo-odd aaaa-composer1 aaa-early zzz-newest
+expect "and a theme's copy outside vendor/, once the theme has loaded" "7.8.0" deep
 
 echo
 echo "Theme previews"
