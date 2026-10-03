@@ -66,7 +66,7 @@ Sources 2 and 3 are read only until that part of the site has loaded, `plugins_l
 
 **Never anything named in the request.** An earlier version read `?action=activate&plugin=...` the way Jetpack Autoloader does. A security review caught that WordPress loads every plugin before it checks who is asking, so a logged-out visitor could name an inactive plugin and its library code would load. Removed, with tests that a request naming one cannot load it.
 
-In each folder it reads Composer's own record of what it installed, `composer/installed.php`, and checks only the `maithemewp/*` packages for a `mai-package.php`. With opcache that record costs next to nothing, where listing folders cost a directory read per plugin per page. A folder without the record, from Composer 1, is listed instead.
+In each folder it reads Composer's own record of what it installed, `composer/installed.php`, and checks only the `maithemewp/*` packages for a `mai-package.php`. With opcache that record costs next to nothing, where listing folders cost a directory read per plugin per page. A folder without the record is listed instead. Composer 1 wrote none, and every Mai plugin that commits `vendor/` gitignores it, following deployable-guard's advice, so on those sites listing is the usual path. See "Performance" for what it costs.
 
 Inactive plugins are never used, even if they hold a newer copy. Loading code someone switched off is the wrong kind of surprise.
 
@@ -118,6 +118,13 @@ What got it there, all measured:
 - Checking files with `is_file()`, which PHP caches, rather than `is_readable()`, which it cannot and which cost eight times as much.
 - Finding newer loader copies from Composer's record rather than looking on disk.
 
+**Without `installed.php` it costs more**, because each plugin's `vendor/maithemewp` folder is listed instead. Measured on 2026-10-03 the same way, medians of ten warm runs:
+
+- **40 plugins, all bundling:** 0.53 ms with the record, 1.4 ms without.
+- **40 plugins, 5 bundling:** 0.11 ms with the record, 0.25 ms without.
+
+A newer loader is still found without the record: only a copy that ships `takeover.php` can take over, so the loader checks for that one file, one file check per folder, and reads that copy's version from its `init.php`.
+
 The first version measured 0.42 ms. The fixes from review, chiefly respecting WordPress's own plugin list, cost about 0.08 ms. Skipping the `installed.php` existence check got back 0.1 ms, but made every active plugin without a `vendor` folder raise a suppressed warning on every page, which Query Monitor lists, so it was not kept.
 
 ## What could go wrong, and the test for each
@@ -138,7 +145,7 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - A library split across an old bootstrap's copy and the newest is recorded, and nothing is recorded when there is no split.
 - A `takeover.php` returning no autoloader is recorded, and the old loader carries on.
 - A newer loader copy with `takeover.php` takes over, answers the class in flight, and the old loader leaves the autoloader list. An older copy's `takeover.php` is ignored.
-- No `installed.php`, as Composer 1 left it: the copy is found by listing the folder.
+- No `installed.php`, as Composer 1 left it and as plugins that gitignore it deploy: the copy is found by listing the folder, a newer loader with `takeover.php` still takes over, and an older one still does not.
 
 **Level 2**
 
@@ -160,7 +167,7 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - `debug.log` stays clean across every case.
 - The 40-plugin timing, under 0.6 ms.
 
-**Every behaviour is checked against a broken loader.** `tests/mutations.sh` makes 33 deliberate breaks, one per behaviour, and each makes at least one test fail. The first full run caught 23; the four that survived each showed a missing test, now added. The breaks skip the timing check, which a busy machine could fail and so make any break look caught.
+**Every behaviour is checked against a broken loader.** `tests/mutations.sh` makes 35 deliberate breaks, one per behaviour, and each makes at least one test fail. The first full run caught 23; the four that survived each showed a missing test, now added. The breaks skip the timing check, which a busy machine could fail and so make any break look caught.
 
 ## Not doing
 

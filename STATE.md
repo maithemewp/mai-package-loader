@@ -20,7 +20,7 @@ Mike: pushing and tagging, step 2.
 ./tests/run.sh
 ```
 
-Expect "All checks passed" twice and "33 caught, 0 survived". `ONLY="name|name" ./tests/mutations.sh` runs chosen breaks. `PHP_BIN` runs levels 1 and 2 on another PHP.
+Expect "All checks passed" twice and "35 caught, 0 survived". `ONLY="name|name" ./tests/mutations.sh` runs chosen breaks. `PHP_BIN` runs levels 1 and 2 on another PHP.
 
 ## Gotchas
 

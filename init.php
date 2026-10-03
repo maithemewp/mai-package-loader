@@ -331,6 +331,10 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		 * callable(string): void. That autoloader replaces this one and is
 		 * handed the class being loaded, if any. A copy no newer than this
 		 * one, a file that throws, or anything else returned is ignored.
+		 *
+		 * Also frozen: init.php declares its version on a line of its own as
+		 * public const VERSION = '1.2.3'; which is read without Composer's
+		 * record.
 		 */
 		private static function takeOver(): void {
 			if ( [] === self::$newer ) {
@@ -598,13 +602,26 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		private static function declarations( string $vendor ): array {
 			$record = $vendor . '/composer/installed.php';
 
-			// Composer 1 wrote no such record. Listing the folder still works,
-			// and the folder is named after the package.
+			// Composer 1 wrote no such record, and plugins that commit vendor/
+			// often leave it out. Listing the folder still works, and the
+			// folder is named after the package.
 			if ( ! @is_file( $record ) ) {
 				$files = [];
 
 				foreach ( @glob( $vendor . '/' . self::VENDOR . '/*/' . self::DECLARATION ) ?: [] as $file ) {
 					$files[ $file ] = self::VENDOR . '/' . basename( dirname( $file ) );
+				}
+
+				// With no record to say a loader copy is newer, only one that
+				// ships takeover.php can be, and its own file says its version.
+				$loader = $vendor . '/' . self::NAME;
+
+				if ( @is_file( $loader . '/' . self::TAKEOVER ) ) {
+					$version = self::versionIn( $loader . '/init.php' );
+
+					if ( null !== $version && version_compare( $version, self::VERSION, '>' ) ) {
+						self::$newer[ $loader ] = $version;
+					}
 				}
 
 				return $files;
@@ -757,6 +774,21 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 				'path'      => trim( $path, '/' ),
 				'classes'   => $classes,
 			];
+		}
+
+		/**
+		 * A loader copy's version, read from its init.php, for when Composer's
+		 * record is missing. Only read for a copy shipping takeover.php, so
+		 * rarely. Null for anything but plain numbers.
+		 */
+		private static function versionIn( string $file ): ?string {
+			$code = @file_get_contents( $file );
+
+			if ( is_string( $code ) && preg_match( "/^\s*public const VERSION = '(\d+(?:\.\d+){0,3})';/m", $code, $match ) ) {
+				return $match[1];
+			}
+
+			return null;
 		}
 
 		/**

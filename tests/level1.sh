@@ -94,6 +94,12 @@ make_plugin p-loader110 loader-110 1.1.0 lib-200 maithemewp/mai-demo 2.0.0
 make_plugin p-composer1 loader-100 1.0.0 lib-300 maithemewp/mai-demo 3.0.0
 # Composer 1 wrote no installed.php, so the loader has to list the folder.
 rm p-composer1/vendor/composer/installed.php
+# Plugins that commit vendor/ often gitignore installed.php, so production has
+# none either.
+make_plugin p-takeover-norecord loader-120-takeover 1.2.0 lib-200 maithemewp/mai-demo 2.0.0
+rm p-takeover-norecord/vendor/composer/installed.php
+make_plugin p-takeover-old-norecord loader-090-takeover 0.9.0 lib-200 maithemewp/mai-demo 2.0.0
+rm p-takeover-old-norecord/vendor/composer/installed.php
 
 echo
 echo "Newest copy wins, whatever the load order"
@@ -144,6 +150,8 @@ expect "nothing is recorded when there is no split"     "3.0.0 none" mix p-a p-b
 echo
 echo "Without Composer's install record"
 expect "a copy is found by listing the folder"     "3.0.0" info p-a p-composer1
+expect "a newer loader still takes over"           "takeover" info p-a p-takeover-norecord p-b
+expect "and an older one still does not"           "3.0.0" info p-a p-takeover-old-norecord p-b
 
 echo
 echo "The loader's own copies"
