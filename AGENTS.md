@@ -8,6 +8,7 @@ One file, `init.php`, loaded by Composer into every plugin that bundles a shared
 - **PHP 8.1.** The lowest floor of any plugin that bundles it (mai-analytics, mai-engine). No readonly classes, DNF types or anything else newer. Check with `PHP_BIN` pointing at php-wasm 8.1.
 - **Nothing on a page that uses no `Mai` class.** `load()` turns away any other class name before doing any work.
 - **Never load from a plugin that is switched off.** Inactive plugins and unloaded must-use folders are not looked in.
+- **Never let the request choose folders.** WordPress loads every plugin before it checks who is asking, so anything read from `$_REQUEST`, `$_GET` or `$_POST` is chosen by whoever sent it, logged in or not. A security review caught this once.
 - **No persistent cache of what was found.** Sites are deployed by copying files, which bypasses every WordPress hook, so a cache goes stale.
 - **No `get_option()` before the object cache exists.** `optionsReady()` guards it. A drop-in runs before that.
 - **Every behaviour has a mutation in `tests/mutations.sh`** that a test catches. Adding a behaviour means adding its test and its mutation.

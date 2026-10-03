@@ -58,12 +58,13 @@ On the first request for a class starting with `Mai`, it looks in these vendor f
 1. **Every vendor folder Composer has registered.** This covers anything already loaded, including must-use plugins and libraries loaded from outside any plugin folder.
 2. **Every active plugin**, from the `active_plugins` option, before most of those plugins have loaded. This is what makes early use safe.
 3. **Every network-active plugin** on multisite, from `active_sitewide_plugins`.
-4. **A plugin the plugins screen is activating in this request**, single or bulk, read from the request the way Jetpack Autoloader does, so its copy can win from the start.
-5. **The active theme and its parent**, since themes load after plugins.
+4. **The active theme and its parent**, since themes load after plugins.
+
+**Never anything named in the request.** An earlier version read `?action=activate&plugin=...` the way Jetpack Autoloader does, so a plugin being activated could win from the start. A security review caught that WordPress loads every plugin before it checks who is asking, so a logged-out visitor could name an inactive plugin and its library code would load. Removed, with tests that a request naming one cannot load it.
 
 In each folder it reads Composer's own record of what it installed, `composer/installed.php`, and checks only the `maithemewp/*` packages for a `mai-package.php`. With opcache that record costs next to nothing, where listing folders cost a directory read per plugin per page. A folder without the record, from Composer 1, is listed instead.
 
-It looks again at `muplugins_loaded` and `plugins_loaded`, and when a plugin is activated later in the request. Each time, every class not loaded yet benefits. Sources 2 to 5 are read only once WordPress can read options safely, so a drop-in sees source 1 until the next look.
+It looks again at `muplugins_loaded` and `plugins_loaded`, and when a plugin is activated later in the request. Each time, every class not loaded yet benefits. Sources 2 to 4 are read only once WordPress can read options safely, so a drop-in sees source 1 until the next look.
 
 Inactive plugins are never used, even if they hold a newer copy, and neither are must-use plugin folders nothing loaded. Loading code someone switched off is the wrong kind of surprise.
 
@@ -92,7 +93,7 @@ So **its public API only ever grows**. A declaration may gain keys over time, an
 
 These cannot be closed in PHP, and each is tested so its behaviour is at least known:
 
-- **A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class. The next page load is right. It happens only in three places: a drop-in such as `object-cache.php`, a must-use plugin using it before a later must-use plugin loads, and a plugin activated from WP-CLI or the REST API after the class loaded.
+- **A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class. The next page load is right. It happens only in three places: a drop-in such as `object-cache.php`, a must-use plugin using it before a later must-use plugin loads, and the request that activates a plugin, if the class loaded before that plugin did.
 - **The first loader copy is the one in charge**, so the loader's API only ever grows.
 
 ## Performance
@@ -128,7 +129,7 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - Early use: a plugin uses a shared class at file load and still gets the newest copy from a plugin later in the alphabet.
 - An inactive plugin with a newer copy is ignored.
 - A listed active plugin whose folder was deleted is skipped.
-- The plugins screen activating a plugin, single and bulk: its copy wins from the start.
+- A request naming an inactive plugin, single or bulk, cannot load its copy.
 - A plugin activated later in the request: classes not loaded yet use its copy.
 - A library loaded from outside any plugin folder is used once plugins have loaded.
 - The active theme's copy, and a parent theme's, are seen before themes load.

@@ -199,8 +199,11 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		}
 
 		/**
-		 * Active plugins, network-active ones too, and any being activated by
-		 * this request through the plugins screen.
+		 * Active plugins, network-active ones too.
+		 *
+		 * Never anything named in the request. WordPress loads every plugin
+		 * before it knows who is asking, so a plugin named there could be
+		 * chosen by a logged-out visitor, and its code would load.
 		 *
 		 * @return array<int, string> Plugin basenames.
 		 */
@@ -211,32 +214,7 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 				$plugins = array_merge( $plugins, array_keys( (array) get_site_option( 'active_sitewide_plugins', [] ) ) );
 			}
 
-			return array_merge( $plugins, self::activatingFromRequest() );
-		}
-
-		/**
-		 * Plugins the plugins screen is activating in this request.
-		 *
-		 * The nonce is not checked: this only decides which folders are
-		 * looked in, and the request fails later if the nonce is wrong. Seen
-		 * this early, the activating plugin's copy can win from the start.
-		 *
-		 * @return array<int, string>
-		 */
-		private static function activatingFromRequest(): array {
-			// phpcs:disable WordPress.Security.NonceVerification
-			$action = isset( $_REQUEST['action'] ) && is_string( $_REQUEST['action'] ) ? $_REQUEST['action'] : '';
-
-			if ( 'activate' === $action && isset( $_REQUEST['plugin'] ) && is_string( $_REQUEST['plugin'] ) ) {
-				return [ $_REQUEST['plugin'] ];
-			}
-
-			if ( 'activate-selected' === $action && isset( $_REQUEST['checked'] ) && is_array( $_REQUEST['checked'] ) ) {
-				return array_values( array_filter( $_REQUEST['checked'], 'is_string' ) );
-			}
-			// phpcs:enable
-
-			return [];
+			return $plugins;
 		}
 
 		/**

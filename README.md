@@ -97,9 +97,9 @@ return [
 
 ## Limits
 
-**A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class, and the next one is right. That only happens in a drop-in such as `object-cache.php`, in a must-use plugin that uses it before a later must-use plugin loads, or for a plugin activated from WP-CLI or the REST API after the class loaded.
+**A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class, and the next one is right. That only happens in a drop-in such as `object-cache.php`, in a must-use plugin that uses it before a later must-use plugin loads, or on the request that activates a plugin, if the class loaded before that plugin did.
 
-**Inactive plugins are never used,** even if they hold a newer copy.
+**Inactive plugins are never used,** even if they hold a newer copy, and nothing in a request can change which folders are looked in.
 
 ## Testing
 

@@ -12,15 +12,7 @@ set -euo pipefail
 
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 WORK="$( mktemp -d )"
-COPIES="$WORK/copies.txt"
-
-find "$ROOT/tests/.wp" -path '*vendor/maithemewp/mai-package-loader/init.php' > "$COPIES"
-
-restore() {
-	while IFS= read -r copy; do cp "$ROOT/init.php" "$copy"; done < "$COPIES"
-	rm -rf "$WORK"
-}
-trap restore EXIT
+trap 'rm -rf "$WORK"' EXIT
 
 # Each mutation: a name, the level it should be caught at, the exact text to
 # find in init.php, and what to replace it with.
@@ -42,8 +34,8 @@ mutations = [
 	("WordPress lists ignored", 2,
 		"if ( self::optionsReady() ) {\n\t\t\t\tforeach ( self::activePlugins() as $plugin ) {",
 		"if ( false ) {\n\t\t\t\tforeach ( self::activePlugins() as $plugin ) {"),
-	("plugins screen activation ignored", 2,
-		"return array_merge( $plugins, self::activatingFromRequest() );", "return $plugins;"),
+	("a request chooses folders", 2,
+		"return $plugins;\n\t\t}", "return array_merge( $plugins, isset( $_REQUEST['plugin'] ) && is_string( $_REQUEST['plugin'] ) ? [ $_REQUEST['plugin'] ] : [] );\n\t\t}"),
 	("themes ignored", 2,
 		"foreach ( self::themeDirs() as $theme ) {", "foreach ( [] as $theme ) {"),
 	("network-active plugins ignored", 2,
@@ -76,9 +68,7 @@ while IFS=$'\t' read -r name level path; do
 	if [ "$level" = "1" ]; then
 		failures="$( LOADER_INIT="$path" "$ROOT/tests/level1.sh" 2>&1 | grep -c 'FAIL ' || true )"
 	else
-		while IFS= read -r copy; do cp "$path" "$copy"; done < "$COPIES"
-		failures="$( "$ROOT/tests/level2.sh" 2>&1 | grep -c 'FAIL ' || true )"
-		while IFS= read -r copy; do cp "$ROOT/init.php" "$copy"; done < "$COPIES"
+		failures="$( LOADER_INIT="$path" "$ROOT/tests/level2.sh" 2>&1 | grep -c 'FAIL ' || true )"
 	fi
 
 	if [ "$failures" -gt 0 ]; then

@@ -217,6 +217,11 @@ if [ "${1:-}" = "--fresh" ] || [ ! -d "$WP" ]; then
 	install_fixtures "$CACHE/multisite"
 fi
 
+# Every installed copy of the loader runs the code under test, not whatever
+# was current when the sites were built. LOADER_INIT swaps in a broken one
+# for tests/mutations.sh.
+find "$CACHE" -path '*vendor/maithemewp/mai-package-loader/init.php' -print0 | xargs -0 -n1 cp "${LOADER_INIT:-$ROOT/init.php}"
+
 CORE="$WP"
 : > "$CORE/wp-content/debug.log"
 
@@ -236,9 +241,11 @@ expect "an active plugin whose folder is gone is skipped" "3.0.0" info
 echo
 echo "Activating a plugin"
 configure "$CORE" twentytwentyfive twentytwentyfive aaa-early zzz-newest
-expect "the plugins screen activating one: its copy wins from the start" "4.0.0" early \
+# Anyone can send these, logged in or not, and WordPress loads every plugin
+# before it checks. Naming an inactive plugin must never load its code.
+expect "a request naming an inactive plugin cannot load its copy" "3.0.0" early \
 	PROBE_REQUEST='{"action":"activate","plugin":"ppp-activating/ppp-activating.php"}'
-expect "bulk activation too" "4.0.0" early \
+expect "nor a bulk request" "3.0.0" early \
 	PROBE_REQUEST='{"action":"activate-selected","checked":["ppp-activating/ppp-activating.php"]}'
 configure "$CORE" twentytwentyfive twentytwentyfive aaa-early zzz-newest
 expect "activated later in the request: classes not loaded yet use its copy" "3.0.0 5.0.0" activate-later
