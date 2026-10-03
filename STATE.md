@@ -3,16 +3,16 @@ Updated: 2026-10-03 by Claude (Opus 5.5)
 
 ## Now
 
-Built, reviewed three times (a security review and two code reviews), and every finding fixed or written up as a known limit in the spec. Local only: not on GitHub, nothing released, and no library uses it yet.
+Built, reviewed three times (a security review and two code reviews), and every finding fixed or written up as a known limit in the spec. On GitHub at maithemewp/mai-package-loader (public, main and develop). Nothing tagged or released, and no library uses it yet.
 
 ## Next
 
-1. Mike decides on creating `maithemewp/mai-package-loader` on GitHub.
-2. Move mai-cache, mai-dom and mai-logger onto it, each in a release newer than every old copy.
+1. Move mai-cache, mai-dom and mai-logger onto it, each in a release newer than every old copy.
+2. Tag 0.1.0 when the first library is ready to use it. Ask Mike first.
 
 ## Blocked / waiting on
 
-Mike: the GitHub repository, and whether the 0.6 ms speed budget (raised from 0.5) is fine.
+Nothing. Mike agreed the repository and the 0.6 ms budget on 2026-10-03.
 
 ## Verify
 
