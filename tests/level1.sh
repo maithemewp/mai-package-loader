@@ -127,6 +127,7 @@ expect "a class it does have still loads from it"   "5.0.0" deep p-missing p-a p
 expect "but once a file is missing, the whole copy is dropped" "3.0.0 3.0.0" info-deep p-missing p-a p-b
 expect "same version twice loads once"             "3.0.0" info p-b p-same
 expect "a class no copy has returns quietly"       "false" missing p-a p-b
+expect "and the library keeps working after it"    "false 3.0.0" nope-then-info p-a p-b
 expect "a non-Mai class does no discovery"         "false true" non-mai p-a p-b
 expect "nor does MailPoet, Mailchimp or MainWP"    "false true" mail p-a p-b
 

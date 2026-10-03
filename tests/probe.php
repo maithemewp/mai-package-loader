@@ -29,6 +29,7 @@ $out = match ( $check ) {
 	'missing'   => var_export( class_exists( 'Mai\Demo\Nope' ), true ),
 	'mail'      => var_export( class_exists( 'MailPoet\Thing' ) || class_exists( 'Mailchimp_Thing' ) || class_exists( 'MainWP\Thing' ), true ) . ' ' . var_export( null === Mai_Package_Loader::discovered(), true ),
 	'info-twice' => Mai\Demo\Info::VERSION . ' ' . ( in_array( ( new ReflectionClass( 'Mai_Package_Loader' ) )->getStaticPropertyValue( 'autoloader' ), spl_autoload_functions(), true ) ? 'still registered' : 'takeover' ),
+	'nope-then-info' => var_export( class_exists( 'Mai\Demo\Nope' ), true ) . ' ' . Mai\Demo\Info::VERSION,
 	'info-deep' => Mai\Demo\Info::VERSION . ' ' . Mai\Demo\Sub\Deep::VERSION,
 	'rejected'  => ( static function (): string { class_exists( 'Mai\Demo\Info' ); $reasons = array_values( Mai_Package_Loader::rejected() ); sort( $reasons ); return implode( '|', $reasons ); } )(),
 	'non-mai'   => var_export( class_exists( 'Acme\Thing' ), true ) . ' ' . var_export( null === Mai_Package_Loader::discovered(), true ),

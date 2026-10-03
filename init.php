@@ -201,11 +201,14 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		 * Requires a class from the newest copy that has it.
 		 *
 		 * @param array<string, array<int, array<string, mixed>>> $libraries
-		 * @param bool $prune Drop a copy whose file has gone, so the rest of
-		 *                    the library comes from one copy, not a mix.
+		 * @param bool $prune Drop newer copies that lack a file an older copy
+		 *                    has, so the rest of the library comes from one
+		 *                    copy, not a mix.
 		 */
 		private static function loadFrom( array $libraries, string $class, bool $prune = false ): void {
 			foreach ( $libraries as $name => $copies ) {
+				$lacking = [];
+
 				foreach ( $copies as $index => $copy ) {
 					$file = self::fileFor( $copy, $class );
 
@@ -215,20 +218,31 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 						break;
 					}
 
-					if ( @is_file( $file ) ) {
-						require $file;
+					if ( ! @is_file( $file ) ) {
+						$lacking[ $index ] = $file;
 
-						return;
+						continue;
 					}
 
-					// Newest first. A copy whose file has gone, say from a
-					// plugin deleted mid-request, is dropped for the rest of
-					// the request, and the next newest answers.
-					if ( $prune ) {
-						self::$rejected[ $copy['dir'] . '/' . self::DECLARATION ] = 'a file it declares is missing: ' . $file;
-						unset( self::$libraries[ $name ][ $index ] );
+					// Newest first. A newer copy lacking a file an older one
+					// has is damaged, since a library's classes only ever
+					// grow; say a plugin was deleted mid-request. It is
+					// dropped for the rest of the request. When no copy has
+					// the file, the class simply does not exist, as a
+					// class_exists() check may well expect, and nothing is
+					// dropped.
+					if ( $prune && [] !== $lacking ) {
+						foreach ( $lacking as $gone => $missing ) {
+							self::$rejected[ $copies[ $gone ]['dir'] . '/' . self::DECLARATION ] = 'a file an older copy has is missing: ' . $missing;
+							unset( self::$libraries[ $name ][ $gone ] );
+						}
+
 						self::$libraries[ $name ] = array_values( self::$libraries[ $name ] );
 					}
+
+					require $file;
+
+					return;
 				}
 			}
 		}
