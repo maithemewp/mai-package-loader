@@ -56,7 +56,7 @@ return [
 
 On the first request for a `Mai\` or `Mai_` class, it looks in these vendor folders:
 
-1. **Every vendor folder Composer has registered.** This covers everything already loaded: plugins, themes, must-use plugins, and libraries loaded from anywhere.
+1. **Every vendor folder Composer has loaded**, from its list of registered loaders, or under Composer 1 from each plugin's `ComposerAutoloaderInit` class, plus the loader's own folder. This covers everything already loaded: plugins, themes, must-use plugins, and libraries loaded from anywhere.
 2. **The plugins WordPress will load this request**, from `wp_get_active_and_valid_plugins()` and, on multisite, `wp_get_active_network_plugins()`. These are WordPress's own lists, so a plugin WP-CLI skips, or recovery mode pauses, is left out exactly as WordPress leaves it out. This is what makes use before most plugins have loaded safe.
 3. **The theme this request uses and its parent**, through `get_stylesheet()` and `get_template()`, so a theme previewed in the Customizer or the site editor counts.
 
@@ -73,6 +73,7 @@ Inactive plugins are never used, even if they hold a newer copy. Loading code so
 ## How it chooses
 
 - **Per library, the highest `version` wins**, compared with `version_compare()`.
+- **Anything that goes wrong is recorded**, in `Mai_Package_Loader::rejected()`, and logged under `WP_DEBUG` when it can cause harm: an unreadable Composer record, a dropped copy, a takeover that throws or returns no autoloader, and a library split across an old bootstrap's copy and the newest. The Composer 1 fallback is recorded but not logged, since it works.
 - **A copy whose declaration cannot be trusted is skipped, and the reason recorded**: it does not return an array, its name is not its Composer package, its version is not plain numbers, it declares no `Mai\` or `Mai_` names, or its path leaves its folder. `Mai_Package_Loader::rejected()` lists them, and with `WP_DEBUG` on each is logged once per request, so "class not found" can be traced without reading the loader.
 - **The same version found twice** loads from the first one found. They are the same code.
 - **If the newest copy lacks a file an older copy has**, say from a plugin deleted mid-request, it is damaged, since a library's classes only grow. It is dropped for the rest of the request and the next newest answers, so the rest of the library comes from one version rather than a mix. **When no copy has the file**, the class does not exist, as a `class_exists()` check may expect, and nothing is dropped. An earlier version dropped the copy in that case too, which mai-cache's own test suite caught: its test classes live under `Mai\Cache\Tests\`.
@@ -89,6 +90,8 @@ Sites already run copies of mai-logger and mai-cache with their own bootstraps. 
 
 Every library requires `maithemewp/mai-package-loader`, so it is bundled many times too. Composer runs its `init.php` once, from whichever plugin loads first.
 
+**Release order.** Push the loader, tag it, then tag each library. Never ship a development snapshot of the loader in a plugin: Composer records it as `dev-develop`, which never counts as newer, so a later fixed loader could not take over from it.
+
 **A newer copy takes over.** Without this, a fix to the loader itself would only reach a site once every plugin bundling it had updated, and 0.1.0 is the only release that can add it. Composer's record holds every copy's version, so finding a newer one costs nothing on disk. A newer copy that ships `takeover.php` in its root is included once and must return an autoloader. That autoloader replaces this one and is handed the class being loaded. A copy no newer, a file that throws, or anything else returned is ignored. 0.1.0 ships no `takeover.php`; a later version that needs to fix something adds one.
 
 So **its public API only ever grows**: `VERSION`, `boot()`, `discovered()` and `rejected()`, plus the `takeover.php` contract. A declaration may gain keys over time, and an older loader ignores keys it does not know. Its PHP floor is the lowest of any consumer: **PHP 8.1**, set by mai-analytics and mai-engine.
@@ -101,7 +104,7 @@ These cannot be closed in PHP. Each is tested, so its behaviour is at least know
 
 - **A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class, and the next one is right. It happens only where WordPress has not yet said what will load: a drop-in such as `object-cache.php`, multisite's `sunrise.php`, and a must-use plugin using it before a later must-use plugin loads.
 - **Code that runs inside discovery gets the copies already loaded.** A filter on `option_active_plugins`, say, that uses a shared class is answered from what Composer has loaded so far, rather than starting discovery again inside itself, which would end in "class not found".
-- **A site whose first Composer autoloader is from Composer 1** has no list of registered vendor folders. WordPress's lists still work; libraries loaded from outside any plugin or theme are not found.
+- **A site whose first Composer autoloader is from Composer 1** shares Composer 1's ClassLoader across every plugin, and it keeps no list of vendor folders. The loader finds them from each plugin's `ComposerAutoloaderInit` class instead, and always includes its own folder. A rollout review caught that an earlier version found nothing after `plugins_loaded`, so a library's first use fatalled; Favorites 2.3.8 is such a plugin, on three local sites. What remains: new folders are only noticed at the stage hooks, not on every class request, so a plugin using a library the moment it is activated gets the copies already known.
 
 ## Performance
 
@@ -132,6 +135,8 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - A non-`Mai` class, and MailPoet, Mailchimp and MainWP classes, trigger no discovery.
 - An old-bootstrap copy present: the loader's newer copy still wins, and a class the old bootstrap already loaded causes no fatal.
 - Two loader copies at different versions: the first one serves, and finds every library.
+- A library split across an old bootstrap's copy and the newest is recorded, and nothing is recorded when there is no split.
+- A `takeover.php` returning no autoloader is recorded, and the old loader carries on.
 - A newer loader copy with `takeover.php` takes over, answers the class in flight, and the old loader leaves the autoloader list. An older copy's `takeover.php` is ignored.
 - No `installed.php`, as Composer 1 left it: the copy is found by listing the folder.
 
@@ -150,11 +155,12 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - Must-use plugins: one using the library sees active plugins; a later one's copy is used once they have all loaded, including by a plugin using it while plugins load.
 - Drop-ins: one using the library gets the copies loaded so far, and every class loaded later gets the newest. Also with `WP_PLUGIN_DIR` set in `wp-config.php`, where reading options too early would fatal.
 - Each copy is counted once after every re-check, including a symlinked plugin found by two paths.
+- A Composer 1 plugin loading first: a library first used after plugins load is found, and so are one loaded from outside any plugin folder and a theme's copy outside `vendor/`.
 - Multisite: a network plugin using the library while loading sees a later network plugin's copy; a damaged network plugin list does not fatal; `sunrise.php` on a second site never reads the first site's plugins, and that site then gets its own copies.
 - `debug.log` stays clean across every case.
 - The 40-plugin timing, under 0.6 ms.
 
-**Every behaviour is checked against a broken loader.** `tests/mutations.sh` makes 28 deliberate breaks, one per behaviour, and each makes at least one test fail. The first full run caught 23; the four that survived each showed a missing test, now added. The breaks skip the timing check, which a busy machine could fail and so make any break look caught.
+**Every behaviour is checked against a broken loader.** `tests/mutations.sh` makes 33 deliberate breaks, one per behaviour, and each makes at least one test fail. The first full run caught 23; the four that survived each showed a missing test, now added. The breaks skip the timing check, which a busy machine could fail and so make any break look caught.
 
 ## Not doing
 

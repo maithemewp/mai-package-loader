@@ -113,6 +113,14 @@ print_r( Mai_Package_Loader::rejected() );
 
 With `WP_DEBUG` on, each is also logged to the debug log.
 
+## Releasing
+
+1. Push the loader's `develop` and `main`.
+2. Tag the loader `v0.1.0`.
+3. Tag each library on the loader.
+
+Never ship a plugin with an untagged development copy of the loader. Composer records it as `dev-develop`, which never counts as newer, so a later fixed loader could not take over from it.
+
 ## Testing
 
 ```sh
