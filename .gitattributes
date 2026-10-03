@@ -1,0 +1,8 @@
+# Keep tests and docs out of the copy Composer installs into every plugin.
+/.gitattributes export-ignore
+/.gitignore     export-ignore
+/docs           export-ignore
+/tests          export-ignore
+/AGENTS.md      export-ignore
+/CLAUDE.md      export-ignore
+/STATE.md       export-ignore
