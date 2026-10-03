@@ -18,7 +18,7 @@ The libraries' own bootstraps tried to fix this and could not. Composer runs a p
 - A plugin using the library does nothing special. It requires the library with Composer and uses it.
 - The loader finds every copy that this request will load, picks the newest per library, and autoloads that library's classes from it.
 
-It is for libraries shared across plugins that opt in. A plugin's own classes have one copy and never go through it. Whole plugins, such as mai-analytics bundled inside mai-publisher, are a different problem and out of scope: swapping a plugin's copy is not safe, because of its database versions, hooks and activation.
+It is for libraries shared across plugins that opt in. A plugin's own classes have one copy and are never served by it: a `Mai\` or `Mai_` one is asked about, matches no declared library, and is left to Composer. Asking still starts discovery, the first time. Whole plugins, such as mai-analytics bundled inside mai-publisher, are a different problem and out of scope: swapping a plugin's copy is not safe, because of its database versions, hooks and activation.
 
 ## The declaration file
 
