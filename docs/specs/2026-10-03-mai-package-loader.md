@@ -155,7 +155,7 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - Must-use plugins: one using the library sees active plugins; a later one's copy is used once they have all loaded, including by a plugin using it while plugins load.
 - Drop-ins: one using the library gets the copies loaded so far, and every class loaded later gets the newest. Also with `WP_PLUGIN_DIR` set in `wp-config.php`, where reading options too early would fatal.
 - Each copy is counted once after every re-check, including a symlinked plugin found by two paths.
-- A Composer 1 plugin loading first: a library first used after plugins load is found, and so are one loaded from outside any plugin folder and a theme's copy outside `vendor/`.
+- A Composer 1 plugin loading first: a library first used after plugins load is found, and so are one loaded from outside any plugin folder, including when used on `plugins_loaded`, and a theme's copy outside `vendor/`.
 - Multisite: a network plugin using the library while loading sees a later network plugin's copy; a damaged network plugin list does not fatal; `sunrise.php` on a second site never reads the first site's plugins, and that site then gets its own copies.
 - `debug.log` stays clean across every case.
 - The 40-plugin timing, under 0.6 ms.

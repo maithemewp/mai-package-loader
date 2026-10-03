@@ -152,6 +152,8 @@ install_fixtures() {
 	printf "<?php\n/**\n * Plugin Name: sym-link\n */\nrequire_once __DIR__ . '/vendor/autoload.php';\n" > "$core/wp-content/real-sym/sym-link.php"
 	ln -s "$core/wp-content/real-sym" "$plugins/sym-link"
 	printf "<?php\n/**\n * Plugin Name: bbb-includer\n */\nrequire_once WP_CONTENT_DIR . '/shared-lib/vendor/autoload.php';\n" > "$plugins/bbb-includer/bbb-includer.php"
+	# Uses the library on plugins_loaded, before the theme is chosen.
+	echo "if ( getenv( 'PROBE_PLUGINS_LOADED' ) ) { add_action( 'plugins_loaded', static function () { \$GLOBALS['mai_demo_plugins_loaded'] = Mai\\Demo\\Sub\\Deep::VERSION; } ); }" >> "$plugins/bbb-includer/bbb-includer.php"
 
 	printf "/*\nTheme Name: Demo Parent\n*/\n" > "$themes/demo-parent/style.css"
 	printf "/*\nTheme Name: Demo Child\nTemplate: demo-parent\n*/\n" > "$themes/demo-child/style.css"
@@ -362,6 +364,7 @@ configure "$CORE" twentytwentyfive twentytwentyfive aaaa-composer1 zzz-newest
 expect "a library first used after plugins load is still found" "3.0.0" info
 configure "$CORE" twentytwentyfive twentytwentyfive aaaa-composer1 aaa-early bbb-includer zzz-newest
 expect "and one loaded later from outside any plugin folder" "7.2.0" deep
+expect "including when used on plugins_loaded"              "7.2.0" plugins-loaded PROBE_PLUGINS_LOADED=1
 configure "$CORE" demo-odd demo-odd aaaa-composer1 aaa-early zzz-newest
 expect "and a theme's copy outside vendor/, once the theme has loaded" "7.8.0" deep
 

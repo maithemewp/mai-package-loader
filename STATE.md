@@ -7,9 +7,8 @@ Built and reviewed five times; every finding fixed or recorded in the spec's "Kn
 
 ## Next
 
-1. Confirm the last `tests/mutations.sh` run ended "33 caught, 0 survived". It was running when the session was cleared; rerun it if unsure.
-2. Ask Mike, then: push this repo, tag `v0.1.0`, then push and tag mai-dom 1.1.0, mai-cache 0.6.0 and mai-logger 0.2.0. Order matters: see README "Releasing".
-3. Consumers, each a separate change: raise the constraint and add this repo's VCS entry. mai-engine (`mai-cache` `^0.4.0` to `^0.6`), mai-analytics, mai-auth, mai-reactions, mai-sportsdataio, springwire-publish-wp, mai-publisher and balloon-juice-plugin (`mai-logger` to `^0.2`). Without the repo entry Composer silently keeps the old version.
+1. Ask Mike, then: push this repo, tag `v0.1.0`, then push and tag mai-dom 1.1.0, mai-cache 0.6.0 and mai-logger 0.2.0. Order matters: see README "Releasing".
+2. Consumers, each a separate change: raise the constraint and add this repo's VCS entry. mai-engine (`mai-cache` `^0.4.0` to `^0.6`), mai-analytics, mai-auth, mai-reactions, mai-sportsdataio, springwire-publish-wp, mai-publisher and balloon-juice-plugin (`mai-logger` to `^0.2`). Without the repo entry Composer silently keeps the old version.
 
 ## Blocked / waiting on
 

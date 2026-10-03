@@ -49,6 +49,10 @@ switch ( $check ) {
 		echo $GLOBALS['mai_demo_sunrise'] ?? 'unset';
 		break;
 
+	case 'plugins-loaded':
+		echo $GLOBALS['mai_demo_plugins_loaded'] ?? 'unset';
+		break;
+
 	case 'theme':
 		echo $GLOBALS['mai_demo_theme'] ?? 'unset';
 		break;
