@@ -75,7 +75,7 @@ Inactive plugins are never used, even if they hold a newer copy. Loading code so
 - **Per library, the highest `version` wins**, compared with `version_compare()`.
 - **A copy whose declaration cannot be trusted is skipped, and the reason recorded**: it does not return an array, its name is not its Composer package, its version is not plain numbers, it declares no `Mai\` or `Mai_` names, or its path leaves its folder. `Mai_Package_Loader::rejected()` lists them, and with `WP_DEBUG` on each is logged once per request, so "class not found" can be traced without reading the loader.
 - **The same version found twice** loads from the first one found. They are the same code.
-- **If a file goes missing from the newest copy**, say from a plugin deleted mid-request, that copy is dropped for the rest of the request and the next newest answers. Dropping the whole copy keeps the rest of the library from one version rather than a mix.
+- **If the newest copy lacks a file an older copy has**, say from a plugin deleted mid-request, it is damaged, since a library's classes only grow. It is dropped for the rest of the request and the next newest answers, so the rest of the library comes from one version rather than a mix. **When no copy has the file**, the class does not exist, as a `class_exists()` check may expect, and nothing is dropped. An earlier version dropped the copy in that case too, which mai-cache's own test suite caught: its test classes live under `Mai\Cache\Tests\`.
 
 ## Living alongside old copies
 
@@ -105,7 +105,7 @@ These cannot be closed in PHP. Each is tested, so its behaviour is at least know
 
 ## Performance
 
-Measured on a throwaway site with 40 active plugins that all bundle the library, served from one long-running PHP process with opcache on, the way PHP-FPM serves a real site: **about 0.5 ms** for the first use, discovery and loading the class included, in the upper middle of ten warm runs. The level 2 test holds it under 0.6 ms. Loading each later class costs about 0.03 ms. A site that never uses a `Mai\` or `Mai_` class pays nothing. Forty bundling plugins is the worst case; a real site has a handful.
+Measured on a throwaway site with 40 active plugins that all bundle the library, served from one long-running PHP process with opcache on, the way PHP-FPM serves a real site: **about 0.5 ms** for the first use, discovery and loading the class included, in the upper middle of ten warm runs. The level 2 test holds it under 0.6 ms, retrying up to three times and keeping the best median, because load on the machine only ever adds time. Loading each later class costs about 0.03 ms. A site that never uses a `Mai\` or `Mai_` class pays nothing. Forty bundling plugins is the worst case; a real site has a handful.
 
 What got it there, all measured:
 
@@ -126,7 +126,7 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - `init.php` parses on PHP 8.1.
 - Newest wins in every load order, with three copies, for a namespaced library and a global-class one.
 - A copy that cannot be trusted is skipped: no declaration, not an array, no name, a `dev-develop`, `-beta` or newline-suffixed version, a declaration copied from another library. Each skipped copy says why.
-- A file missing from the newest copy: the next newest answers, and the whole copy is dropped for the rest of the request.
+- A file missing from the newest copy: the next newest answers, and the whole copy is dropped for the rest of the request. A class no copy has drops nothing, and the library keeps working after it.
 - The same version in two plugins loads once.
 - A class no copy has returns quietly.
 - A non-`Mai` class, and MailPoet, Mailchimp and MainWP classes, trigger no discovery.
@@ -154,7 +154,7 @@ Level 1 runs real Composer installs with no WordPress. Level 2 runs inside a thr
 - `debug.log` stays clean across every case.
 - The 40-plugin timing, under 0.6 ms.
 
-**Every behaviour is checked against a broken loader.** `tests/mutations.sh` makes 27 deliberate breaks, one per behaviour, and each makes at least one test fail. The first full run caught 23; the four that survived each showed a missing test, now added.
+**Every behaviour is checked against a broken loader.** `tests/mutations.sh` makes 28 deliberate breaks, one per behaviour, and each makes at least one test fail. The first full run caught 23; the four that survived each showed a missing test, now added. The breaks skip the timing check, which a busy machine could fail and so make any break look caught.
 
 ## Not doing
 

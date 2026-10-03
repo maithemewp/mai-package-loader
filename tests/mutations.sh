@@ -109,7 +109,7 @@ while IFS=$'\t' read -r name level path; do
 	if [ "$level" = "1" ]; then
 		failures="$( LOADER_INIT="$path" "$ROOT/tests/level1.sh" 2>&1 | grep -c 'FAIL ' || true )"
 	else
-		failures="$( LOADER_INIT="$path" "$ROOT/tests/level2.sh" 2>&1 | grep -c 'FAIL ' || true )"
+		failures="$( SKIP_PERF=1 LOADER_INIT="$path" "$ROOT/tests/level2.sh" 2>&1 | grep -c 'FAIL ' || true )"
 	fi
 
 	if [ "$failures" -gt 0 ]; then
