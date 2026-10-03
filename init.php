@@ -7,29 +7,35 @@
  *
  * Loaded by Composer through this package's "files" entry. Composer runs that
  * entry once per request however many plugins bundle this package, so the
- * first plugin's copy of this class serves the whole request. That is why the
- * public API only ever grows: an old copy may be the one in charge.
+ * first plugin's copy of this class serves the whole request, unless a newer
+ * copy takes over (see takeOver()). That is why the public API only ever
+ * grows: an old copy may be the one in charge.
  *
  * PHP 8.1, the lowest floor of any plugin that bundles it.
  */
 
 declare( strict_types=1 );
 
-defined( 'ABSPATH' ) || 'cli' === PHP_SAPI || exit;
+// No ABSPATH guard. This file only defines a class and registers an
+// autoloader, and an exit here would end the whole request for any site that
+// loads Composer before WordPress, with nothing logged.
 
 if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 	final class Mai_Package_Loader {
-		/** This copy's version. Informational: the first copy loaded serves. */
+		/** This copy's version. Compared against other copies to take over. */
 		public const VERSION = '0.1.0';
 
 		/** The file a shared library ships to declare itself. */
-		public const DECLARATION = 'mai-package.php';
+		private const DECLARATION = 'mai-package.php';
 
 		/**
-		 * Every class a shared library may own starts with this, so anything
-		 * else is turned away before any work is done.
+		 * The file a newer loader ships to take over from an older one. Its
+		 * name and contract are frozen: see takeOver().
 		 */
-		private const PREFIX = 'Mai';
+		private const TAKEOVER = 'takeover.php';
+
+		/** Every class a shared library may own starts with one of these. */
+		private const PREFIXES = [ 'Mai\\', 'Mai_' ];
 
 		/** Only libraries published under this vendor are looked for. */
 		private const VENDOR = 'maithemewp';
@@ -37,62 +43,170 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		/** This package's own Composer name. */
 		private const NAME = 'maithemewp/mai-package-loader';
 
+		/** Composer's loader class, named once. */
+		private const COMPOSER = 'Composer\Autoload\ClassLoader';
+
 		/**
 		 * Library name to its copies, newest first. Null until the first
-		 * request for a class starting with "Mai".
+		 * request for a Mai class.
 		 *
 		 * @var array<string, array<int, array{name: string, version: string, dir: string, namespace: ?string, path: string, classes: array<string, string>}>>|null
 		 */
 		private static ?array $libraries = null;
 
-		private static bool $booted = false;
+		/**
+		 * Vendor folders already read, so looking again only reads new ones.
+		 *
+		 * @var array<string, true>
+		 */
+		private static array $scanned = [];
+
+		/** How many Composer loaders there were at the last look. */
+		private static int $composerCount = -1;
+
+		/**
+		 * Copies of this loader newer than this one, folder to version, from
+		 * Composer's record. Only these are ever checked on disk.
+		 *
+		 * @var array<string, string>
+		 */
+		private static array $newer = [];
+
+		/**
+		 * Copies that were skipped, declaration file to the reason, so a
+		 * "class not found" can be traced without reading this code.
+		 *
+		 * @var array<string, string>
+		 */
+		private static array $rejected = [];
+
+		/** Set while discovery runs, so anything it triggers cannot restart it. */
+		private static bool $discovering = false;
+
+		/** The autoloader this copy registered, so a newer copy can replace it. */
+		private static ?Closure $autoloader = null;
+
+		/** Set once a newer copy has taken over. This copy then does nothing. */
+		private static bool $retired = false;
+
+		/** The newer copy's autoloader, once one has taken over. */
+		private static mixed $successor = null;
 
 		/**
 		 * Puts the loader first in line, so it answers before an old library
 		 * bootstrap that appended its own autoloader.
 		 */
 		public static function boot(): void {
-			if ( self::$booted ) {
+			if ( null !== self::$autoloader ) {
 				return;
 			}
 
-			self::$booted = true;
+			self::$autoloader = self::load( ... );
 
-			spl_autoload_register( [ self::class, 'load' ], true, true );
+			spl_autoload_register( self::$autoloader, true, true );
 
-			// A plugin activated this request loads its files after discovery
-			// may already have run. Its copies are added then, which helps
-			// every class not loaded yet. One already loaded cannot be swapped.
-			if ( function_exists( 'add_action' ) ) {
-				add_action( 'activate_plugin', [ self::class, 'activating' ], 0 );
+			// Any plugin, theme or must-use plugin that has loaded is in
+			// Composer's list, and load() reads new entries as they appear.
+			// These two look again for what has not loaded yet: active plugins
+			// once WordPress can read its lists, which a drop-in asks before;
+			// and the theme once it is chosen, which a preview changes after
+			// plugins load and before the theme's own files run.
+			$refresh = self::refresh( ... );
 
-				// Must-use plugins are not in any list, and a drop-in may ask
-				// before WordPress can read its lists at all. Looking again
-				// after each loading stage helps every class not loaded yet.
-				add_action( 'muplugins_loaded', [ self::class, 'refresh' ], PHP_INT_MIN );
-				add_action( 'plugins_loaded', [ self::class, 'refresh' ], PHP_INT_MIN );
-			}
+			self::hook( 'muplugins_loaded', $refresh, PHP_INT_MIN );
+			self::hook( 'setup_theme', $refresh, PHP_INT_MAX );
 		}
 
 		/**
-		 * Looks again for copies loaded since discovery ran. Does nothing if
-		 * discovery has not run, since it will see them when it does.
+		 * What was found, for diagnostics: each library's versions, newest
+		 * first. Null until discovery has run.
+		 *
+		 * @return array<string, array<int, string>>|null
 		 */
-		public static function refresh(): void {
-			if ( null !== self::$libraries ) {
-				self::$libraries = self::merge( self::$libraries, self::scan( self::roots() ) );
+		public static function discovered(): ?array {
+			if ( null === self::$libraries ) {
+				return null;
 			}
+
+			return array_map(
+				static fn( array $copies ): array => array_column( $copies, 'version' ),
+				self::$libraries,
+			);
 		}
 
-		public static function load( string $class ): void {
-			if ( ! str_starts_with( $class, self::PREFIX ) ) {
+		/**
+		 * Copies that were found and skipped, declaration file to the reason.
+		 *
+		 * @return array<string, string>
+		 */
+		public static function rejected(): array {
+			return self::$rejected;
+		}
+
+		/**
+		 * Adds a hook, before WordPress's hook functions exist if need be.
+		 *
+		 * A site may load Composer from wp-config.php. WordPress picks up
+		 * hooks left in $wp_filter when it loads its plugin API.
+		 */
+		private static function hook( string $name, Closure $callback, int $priority ): void {
+			if ( function_exists( 'add_action' ) ) {
+				add_action( $name, $callback, $priority );
+
 				return;
 			}
 
-			self::$libraries ??= self::merge( [], self::scan( self::roots() ) );
+			$GLOBALS['wp_filter'][ $name ][ $priority ][] = [
+				'function'      => $callback,
+				'accepted_args' => 1,
+			];
+		}
 
-			foreach ( self::$libraries as $copies ) {
-				foreach ( $copies as $copy ) {
+		private static function load( string $class ): void {
+			if ( self::$retired || ! self::isMaiName( $class ) ) {
+				return;
+			}
+
+			// Something discovery triggered, such as a filter on a list it
+			// reads, asks for a Mai class. It gets the copies already loaded,
+			// rather than a second discovery inside the first.
+			if ( self::$discovering ) {
+				self::loadFrom( self::merge( [], self::scan( self::composerVendors() ) ), $class );
+
+				return;
+			}
+
+			if ( null === self::$libraries ) {
+				self::discover();
+			} elseif ( self::composerCount() !== self::$composerCount ) {
+				// A plugin, theme or must-use plugin has loaded since the last
+				// look, perhaps one being activated right now. Read its copies
+				// before answering.
+				self::discover( self::composerVendors() );
+			}
+
+			// A newer copy may have taken over. It owns this class now, and
+			// PHP will not reliably call an autoloader registered in the
+			// middle of a lookup, so it is asked here.
+			if ( self::$retired ) {
+				( self::$successor )( $class );
+
+				return;
+			}
+
+			self::loadFrom( self::$libraries, $class, true );
+		}
+
+		/**
+		 * Requires a class from the newest copy that has it.
+		 *
+		 * @param array<string, array<int, array<string, mixed>>> $libraries
+		 * @param bool $prune Drop a copy whose file has gone, so the rest of
+		 *                    the library comes from one copy, not a mix.
+		 */
+		private static function loadFrom( array $libraries, string $class, bool $prune = false ): void {
+			foreach ( $libraries as $name => $copies ) {
+				foreach ( $copies as $index => $copy ) {
 					$file = self::fileFor( $copy, $class );
 
 					// Not this library's class. Every copy of a library owns
@@ -101,82 +215,165 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 						break;
 					}
 
-					// Newest first. A copy whose file has gone, say from a
-					// plugin deleted mid-request, falls back to the next.
-					if ( is_readable( $file ) ) {
+					if ( @is_file( $file ) ) {
 						require $file;
 
 						return;
+					}
+
+					// Newest first. A copy whose file has gone, say from a
+					// plugin deleted mid-request, is dropped for the rest of
+					// the request, and the next newest answers.
+					if ( $prune ) {
+						self::$rejected[ $copy['dir'] . '/' . self::DECLARATION ] = 'a file it declares is missing: ' . $file;
+						unset( self::$libraries[ $name ][ $index ] );
+						self::$libraries[ $name ] = array_values( self::$libraries[ $name ] );
 					}
 				}
 			}
 		}
 
 		/**
-		 * What was found, for diagnostics. Null until discovery has run.
-		 *
-		 * @return array<string, array<int, array<string, mixed>>>|null
+		 * Looks again for copies not read yet. Does nothing if discovery has
+		 * not run, since it will see them when it does.
 		 */
-		public static function discovered(): ?array {
-			return self::$libraries;
+		private static function refresh(): void {
+			if ( null !== self::$libraries && ! self::$retired && ! self::$discovering ) {
+				self::discover();
+			}
 		}
 
 		/**
-		 * Adds the copies of a plugin being activated this request.
+		 * Reads copies from the given vendor folders, or from everywhere,
+		 * skipping folders read before, and hands over to a newer loader if
+		 * one has arrived.
 		 *
-		 * @param mixed $plugin Plugin basename, from `activate_plugin`.
+		 * Finding the folders is inside the guard too: it reads WordPress's
+		 * lists, and a filter on those lists may itself use a Mai class.
+		 *
+		 * @param array<int, string>|null $vendors
 		 */
-		public static function activating( $plugin = '' ): void {
-			if ( null === self::$libraries || ! is_string( $plugin ) || ! defined( 'WP_PLUGIN_DIR' ) ) {
+		private static function discover( ?array $vendors = null ): void {
+			self::$discovering = true;
+
+			try {
+				self::$composerCount = self::composerCount();
+
+				$vendors ??= self::roots();
+				$fresh     = [];
+
+				foreach ( $vendors as $vendor ) {
+					if ( ! isset( self::$scanned[ $vendor ] ) ) {
+						self::$scanned[ $vendor ] = true;
+						$fresh[]                  = $vendor;
+					}
+				}
+
+				self::$libraries = self::merge( self::$libraries ?? [], self::scan( $fresh ) );
+			} finally {
+				self::$discovering = false;
+			}
+
+			self::takeOver();
+		}
+
+		/**
+		 * Hands this request to a newer copy of the loader, if one ships the
+		 * means to take over.
+		 *
+		 * Without this, whichever copy loads first serves the request, so a
+		 * fix to the loader itself would only reach a site once every plugin
+		 * bundling it had updated.
+		 *
+		 * Frozen contract: a copy may ship takeover.php in its root. It is
+		 * included once, given nothing, and must return an autoloader,
+		 * callable(string): void. That autoloader replaces this one and is
+		 * handed the class being loaded, if any. A copy no newer than this
+		 * one, a file that throws, or anything else returned is ignored.
+		 */
+		private static function takeOver(): void {
+			if ( [] === self::$newer ) {
 				return;
 			}
 
-			$vendor = self::pluginVendor( WP_PLUGIN_DIR, $plugin );
+			// Newest first, and each checked on disk once.
+			uasort( self::$newer, static fn( string $a, string $b ): int => version_compare( $b, $a ) );
 
-			if ( null !== $vendor ) {
-				self::$libraries = self::merge( self::$libraries, self::scan( [ $vendor ] ) );
+			$newest = null;
+
+			foreach ( self::$newer as $dir => $version ) {
+				if ( @is_file( $dir . '/' . self::TAKEOVER ) ) {
+					$newest = $dir;
+
+					break;
+				}
 			}
+
+			self::$newer = [];
+
+			if ( null === $newest ) {
+				return;
+			}
+
+			try {
+				$next = ( static fn( string $path ): mixed => include $path )( $newest . '/' . self::TAKEOVER );
+			} catch ( Throwable ) {
+				return;
+			}
+
+			if ( ! is_callable( $next ) ) {
+				return;
+			}
+
+			self::$retired   = true;
+			self::$successor = $next;
+
+			spl_autoload_unregister( self::$autoloader );
+			spl_autoload_register( $next, true, true );
 		}
 
 		/**
 		 * The vendor folders to look in.
 		 *
-		 * Composer's registered loaders come first: they cover everything
-		 * already loaded, must-use plugins included. WordPress's lists of
-		 * active plugins and the active theme are what let a library be used
-		 * before most plugins have loaded.
+		 * Composer's list covers everything already loaded. WordPress's own
+		 * lists of what this request will load are what let a library be used
+		 * before most plugins have loaded. Each is read only until its part of
+		 * the site has loaded; from then on Composer's list is the truth, so
+		 * a plugin WP-CLI skips, or recovery mode pauses, never counts.
+		 *
+		 * Never anything named in the request. WordPress loads every plugin
+		 * before it knows who is asking, so a folder named there could be
+		 * chosen by a logged-out visitor, and its code would load.
 		 *
 		 * @return array<int, string>
 		 */
 		private static function roots(): array {
-			$roots  = [];
-			$loader = 'Composer\Autoload\ClassLoader';
-
-			if ( class_exists( $loader, false ) && method_exists( $loader, 'getRegisteredLoaders' ) ) {
-				foreach ( array_keys( $loader::getRegisteredLoaders() ) as $vendor ) {
-					$roots[] = (string) $vendor;
-				}
-			}
+			$roots = self::composerVendors();
 
 			if ( self::optionsReady() ) {
-				foreach ( self::activePlugins() as $plugin ) {
-					$vendor = self::pluginVendor( WP_PLUGIN_DIR, $plugin );
+				if ( function_exists( 'did_action' ) && ! did_action( 'plugins_loaded' ) ) {
+					foreach ( self::pluginFiles() as $file ) {
+						$folder = dirname( $file );
 
-					if ( null !== $vendor ) {
-						$roots[] = $vendor;
+						// A single-file plugin has no folder of its own.
+						if ( rtrim( $folder, '/' ) !== rtrim( WP_PLUGIN_DIR, '/' ) ) {
+							$roots[] = $folder . '/vendor';
+						}
 					}
 				}
 
-				foreach ( self::themeDirs() as $theme ) {
-					$roots[] = $theme . '/vendor';
+				if ( function_exists( 'did_action' ) && ! did_action( 'after_setup_theme' ) ) {
+					foreach ( self::themeDirs() as $theme ) {
+						$roots[] = $theme . '/vendor';
+					}
 				}
 			}
 
-			// Composer's list and the plugin list name the same folders, so
-			// one entry per path. Resolving every path to catch symlinks cost
-			// more than everything else here put together; a symlinked folder
-			// read twice is harmless, because merge() counts each copy once
-			// by its real folder.
+			// Composer's list and WordPress's name the same folders, so one
+			// entry per path. Resolving every path to catch symlinks cost more
+			// than everything else here put together; a symlinked folder read
+			// twice is harmless, because merge() counts each copy once by its
+			// real folder.
 			$unique = [];
 
 			foreach ( $roots as $root ) {
@@ -186,47 +383,85 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 			return array_keys( $unique );
 		}
 
-		/**
-		 * Whether WordPress can answer `get_option()` safely yet.
-		 *
-		 * Not in a drop-in such as object-cache.php, which runs before the
-		 * object cache exists. There, Composer's list is all there is.
-		 */
-		private static function optionsReady(): bool {
-			return function_exists( 'get_option' )
-				&& defined( 'WP_PLUGIN_DIR' )
-				&& isset( $GLOBALS['wpdb'], $GLOBALS['wp_object_cache'] );
-		}
-
-		/**
-		 * Active plugins, network-active ones too.
-		 *
-		 * Never anything named in the request. WordPress loads every plugin
-		 * before it knows who is asking, so a plugin named there could be
-		 * chosen by a logged-out visitor, and its code would load.
-		 *
-		 * @return array<int, string> Plugin basenames.
-		 */
-		private static function activePlugins(): array {
-			$plugins = array_values( array_filter( (array) get_option( 'active_plugins', [] ), 'is_string' ) );
-
-			if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'get_site_option' ) ) {
-				$plugins = array_merge( $plugins, array_keys( (array) get_site_option( 'active_sitewide_plugins', [] ) ) );
+		/** Every vendor folder Composer has registered a loader for. */
+		private static function composerVendors(): array {
+			if ( ! class_exists( self::COMPOSER, false ) || ! method_exists( self::COMPOSER, 'getRegisteredLoaders' ) ) {
+				return [];
 			}
 
-			return $plugins;
+			return array_map(
+				static fn( $vendor ): string => rtrim( (string) $vendor, '/' ),
+				array_keys( ( self::COMPOSER )::getRegisteredLoaders() ),
+			);
+		}
+
+		private static function composerCount(): int {
+			if ( ! class_exists( self::COMPOSER, false ) || ! method_exists( self::COMPOSER, 'getRegisteredLoaders' ) ) {
+				return 0;
+			}
+
+			return count( ( self::COMPOSER )::getRegisteredLoaders() );
 		}
 
 		/**
-		 * The active theme and its parent.
+		 * Whether WordPress can answer for this site safely yet.
+		 *
+		 * Not in a drop-in such as object-cache.php, which runs before the
+		 * object cache exists, and not on multisite before WordPress knows
+		 * which site this is, as in sunrise.php. There, Composer's list is
+		 * all there is.
+		 */
+		private static function optionsReady(): bool {
+			if ( ! function_exists( 'get_option' ) || ! defined( 'WP_PLUGIN_DIR' ) || ! isset( $GLOBALS['wpdb'], $GLOBALS['wp_object_cache'] ) ) {
+				return false;
+			}
+
+			if ( function_exists( 'is_multisite' ) && is_multisite() ) {
+				return function_exists( 'did_action' ) && did_action( 'ms_loaded' ) > 0;
+			}
+
+			return true;
+		}
+
+		/**
+		 * The plugin files WordPress will load this request, network-active
+		 * ones first, the way WordPress loads them.
+		 *
+		 * WordPress's own lists, so a plugin that WP-CLI skips, that recovery
+		 * mode pauses, or that a damaged option names, is left out exactly as
+		 * WordPress leaves it out.
+		 *
+		 * @return array<int, string> Absolute paths to plugin files.
+		 */
+		private static function pluginFiles(): array {
+			$files = [];
+
+			if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'wp_get_active_network_plugins' ) ) {
+				$files = wp_get_active_network_plugins();
+			}
+
+			if ( function_exists( 'wp_get_active_and_valid_plugins' ) ) {
+				$files = array_merge( $files, wp_get_active_and_valid_plugins() );
+			}
+
+			return array_values( array_filter( $files, 'is_string' ) );
+		}
+
+		/**
+		 * The theme this request uses and its parent.
+		 *
+		 * Through get_stylesheet() and get_template(), so a theme previewed
+		 * in the Customizer or the site editor counts, once the preview has
+		 * set itself up.
 		 *
 		 * @return array<int, string>
 		 */
 		private static function themeDirs(): array {
 			$dirs = [];
 
-			foreach ( [ 'stylesheet', 'template' ] as $option ) {
-				$slug = get_option( $option );
+			foreach ( [ 'stylesheet', 'template' ] as $which ) {
+				$getter = 'get_' . $which;
+				$slug   = function_exists( $getter ) ? $getter() : get_option( $which );
 
 				if ( ! is_string( $slug ) || '' === $slug || str_contains( $slug, '..' ) ) {
 					continue;
@@ -237,21 +472,10 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 				// cost a database query per page, since it rarely exists.
 				$root = function_exists( 'get_theme_root' ) ? get_theme_root( $slug ) : WP_CONTENT_DIR . '/themes';
 
-				$dirs[] = rtrim( $root, '/' ) . '/' . $slug;
+				$dirs[] = rtrim( (string) $root, '/' ) . '/' . $slug;
 			}
 
 			return $dirs;
-		}
-
-		/** A plugin's vendor folder, or null for a single-file plugin. */
-		private static function pluginVendor( string $pluginsDir, string $plugin ): ?string {
-			$folder = dirname( $plugin );
-
-			if ( '.' === $folder || '' === $folder || str_contains( $plugin, '..' ) ) {
-				return null;
-			}
-
-			return rtrim( $pluginsDir, '/' ) . '/' . $folder . '/vendor';
 		}
 
 		/**
@@ -264,8 +488,8 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 			$copies = [];
 
 			foreach ( $vendors as $vendor ) {
-				foreach ( self::declarations( $vendor ) as $file ) {
-					$copy = self::read( $file );
+				foreach ( self::declarations( $vendor ) as $file => $package ) {
+					$copy = self::read( $file, $package );
 
 					if ( null !== $copy ) {
 						$copies[] = $copy;
@@ -277,41 +501,79 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		}
 
 		/**
-		 * The declaration files in one vendor folder.
+		 * The declaration files in one vendor folder, each with the Composer
+		 * package it belongs to.
 		 *
 		 * Read from Composer's own record of what it installed and where.
 		 * With opcache that record costs next to nothing to include, where
 		 * listing folders costs a directory read per plugin on every page.
-		 * It also finds a package Composer installed somewhere custom.
+		 * It also finds a package Composer installed somewhere custom. Copies
+		 * of this loader are noted on the way, for takeOver().
 		 *
-		 * @return array<int, string>
+		 * The @ on file checks keeps open_basedir from filling a log when a
+		 * folder is symlinked from outside the allowed paths.
+		 *
+		 * @return array<string, string> Declaration file to package name.
 		 */
 		private static function declarations( string $vendor ): array {
 			$record = $vendor . '/composer/installed.php';
 
-			// Composer 1 wrote no such record. Listing the folder still works.
-			if ( ! is_file( $record ) ) {
-				return glob( $vendor . '/' . self::VENDOR . '/*/' . self::DECLARATION ) ?: [];
+			// Composer 1 wrote no such record. Listing the folder still works,
+			// and the folder is named after the package.
+			if ( ! @is_file( $record ) ) {
+				$files = [];
+
+				foreach ( @glob( $vendor . '/' . self::VENDOR . '/*/' . self::DECLARATION ) ?: [] as $file ) {
+					$files[ $file ] = self::VENDOR . '/' . basename( dirname( $file ) );
+				}
+
+				return $files;
 			}
 
+			// is_readable() would answer this up front, but PHP cannot cache
+			// it, and it cost eight times is_file() across forty plugins. An
+			// unreadable record fails here instead, quietly.
 			try {
-				$installed = ( static fn( string $path ): mixed => include $path )( $record );
+				$installed = ( static fn( string $path ): mixed => @include $path )( $record );
 			} catch ( Throwable ) {
+				$installed = false;
+			}
+
+			if ( ! is_array( $installed ) ) {
+				self::$rejected[ $record ] = 'Composer\'s record could not be read';
+
 				return [];
 			}
 
 			$files = [];
 
 			foreach ( is_array( $installed['versions'] ?? null ) ? $installed['versions'] : [] as $name => $package ) {
-				// This package never declares itself, and every library brings it.
-				if ( ! is_string( $name ) || ! str_starts_with( $name, self::VENDOR . '/' ) || self::NAME === $name || ! is_string( $package['install_path'] ?? null ) ) {
+				if ( ! is_string( $name ) || ! str_starts_with( $name, self::VENDOR . '/' ) || ! is_array( $package ) ) {
 					continue;
 				}
 
-				$file = $package['install_path'] . '/' . self::DECLARATION;
+				// Early Composer 2 records had no install path. The default
+				// place is right for a library.
+				$path = is_string( $package['install_path'] ?? null ) ? $package['install_path'] : $vendor . '/' . $name;
 
-				if ( is_file( $file ) ) {
-					$files[] = $file;
+				// A copy of this loader. Composer's record holds its version, so
+				// only a newer one, the rare case, costs a look on disk later.
+				// A development install reports a branch, not a number, and
+				// never takes over.
+				if ( self::NAME === $name ) {
+					$version = $package['version'] ?? null;
+
+					if ( is_string( $version ) && preg_match( '/^\d+(\.\d+){0,3}\z/', $version ) && version_compare( $version, self::VERSION, '>' ) ) {
+						self::$newer[ $path ] = $version;
+					}
+
+					continue;
+				}
+
+				$file = $path . '/' . self::DECLARATION;
+
+				if ( @is_file( $file ) ) {
+					$files[ $file ] = $name;
 				}
 			}
 
@@ -351,50 +613,60 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 		/**
 		 * One declaration, or null if it cannot be trusted.
 		 *
-		 * Anything unexpected skips the copy rather than guessing. A newer
-		 * declaration may carry keys this copy does not know, and those are
-		 * ignored.
+		 * Anything unexpected skips the copy rather than guessing, and records
+		 * why. A newer declaration may carry keys this copy does not know, and
+		 * those are ignored.
 		 *
+		 * @param string $package The Composer package the file came from. A
+		 *                        declaration naming any other is skipped, so a
+		 *                        file copied from another library cannot pass
+		 *                        for it.
 		 * @return array<string, mixed>|null
 		 */
-		private static function read( string $file ): ?array {
+		private static function read( string $file, string $package ): ?array {
 			try {
 				$data = ( static fn( string $path ): mixed => include $path )( $file );
-			} catch ( Throwable ) {
-				return null;
+			} catch ( Throwable $e ) {
+				return self::reject( $file, 'it threw ' . $e::class );
 			}
 
 			if ( ! is_array( $data ) ) {
-				return null;
+				return self::reject( $file, 'it does not return an array' );
 			}
 
 			$name    = $data['name'] ?? null;
 			$version = $data['version'] ?? null;
 
-			if ( ! is_string( $name ) || '' === $name || ! is_string( $version ) || ! preg_match( '/^\d+(\.\d+){0,3}(-[0-9A-Za-z.]+)?$/', $version ) ) {
-				return null;
+			if ( $package !== $name ) {
+				return self::reject( $file, 'its name is not ' . $package );
+			}
+
+			// Plain numbers only. Anything else sorts unpredictably against
+			// real versions in version_compare().
+			if ( ! is_string( $version ) || ! preg_match( '/^\d+(\.\d+){0,3}\z/', $version ) ) {
+				return self::reject( $file, 'its version is not plain numbers like 0.6.0' );
 			}
 
 			$namespace = $data['namespace'] ?? null;
-			$namespace = is_string( $namespace ) && str_starts_with( $namespace, self::PREFIX ) ? rtrim( $namespace, '\\' ) . '\\' : null;
+			$namespace = is_string( $namespace ) && self::isMaiName( $namespace ) ? rtrim( $namespace, '\\' ) . '\\' : null;
 
 			$classes = [];
 
 			foreach ( is_array( $data['classes'] ?? null ) ? $data['classes'] : [] as $class => $relative ) {
-				if ( is_string( $class ) && str_starts_with( $class, self::PREFIX ) && is_string( $relative ) && ! str_contains( $relative, '..' ) ) {
+				if ( is_string( $class ) && self::isMaiName( $class ) && is_string( $relative ) && ! str_contains( $relative, '..' ) ) {
 					$classes[ $class ] = $relative;
 				}
 			}
 
 			if ( null === $namespace && [] === $classes ) {
-				return null;
+				return self::reject( $file, 'it declares no namespace or class starting Mai\\ or Mai_' );
 			}
 
 			$path = $data['path'] ?? '';
-			$dir  = realpath( dirname( $file ) );
+			$dir  = @realpath( dirname( $file ) );
 
 			if ( false === $dir || ! is_string( $path ) || str_contains( $path, '..' ) ) {
-				return null;
+				return self::reject( $file, 'its path is not a folder inside it' );
 			}
 
 			return [
@@ -405,6 +677,35 @@ if ( ! class_exists( 'Mai_Package_Loader', false ) ) {
 				'path'      => trim( $path, '/' ),
 				'classes'   => $classes,
 			];
+		}
+
+		/**
+		 * Records why a copy was skipped, and logs it when the site is
+		 * debugging, so nobody has to read this file to find out.
+		 */
+		private static function reject( string $file, string $reason ): ?array {
+			if ( ! isset( self::$rejected[ $file ] ) && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+				error_log( sprintf( 'Mai Package Loader skipped %s: %s.', $file, $reason ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			}
+
+			self::$rejected[ $file ] = $reason;
+
+			return null;
+		}
+
+		/**
+		 * Whether a name could belong to a shared library: `Mai\...` or
+		 * `Mai_...`. Not just "Mai", which would also catch MailPoet,
+		 * Mailchimp and MainWP.
+		 */
+		private static function isMaiName( string $name ): bool {
+			foreach ( self::PREFIXES as $prefix ) {
+				if ( str_starts_with( $name, $prefix ) ) {
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		/**

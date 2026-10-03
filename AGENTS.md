@@ -8,6 +8,8 @@ One file, `init.php`, loaded by Composer into every plugin that bundles a shared
 - **PHP 8.1.** The lowest floor of any plugin that bundles it (mai-analytics, mai-engine). No readonly classes, DNF types or anything else newer. Check with `PHP_BIN` pointing at php-wasm 8.1.
 - **Nothing on a page that uses no `Mai` class.** `load()` turns away any other class name before doing any work.
 - **Never load from a plugin that is switched off.** Inactive plugins and unloaded must-use folders are not looked in.
+- **WordPress's own lists, never the raw options.** `wp_get_active_and_valid_plugins()` and `get_stylesheet()` respect WP-CLI's skips, recovery mode and theme previews; `get_option( 'active_plugins' )` does not. After `plugins_loaded` and `after_setup_theme`, Composer's list of loaded vendor folders is the truth.
+- **A takeover path for newer loaders.** `takeover.php` is a frozen contract; see the spec.
 - **Never let the request choose folders.** WordPress loads every plugin before it checks who is asking, so anything read from `$_REQUEST`, `$_GET` or `$_POST` is chosen by whoever sent it, logged in or not. A security review caught this once.
 - **No persistent cache of what was found.** Sites are deployed by copying files, which bypasses every WordPress hook, so a cache goes stale.
 - **No `get_option()` before the object cache exists.** `optionsReady()` guards it. A drop-in runs before that.
@@ -15,7 +17,7 @@ One file, `init.php`, loaded by Composer into every plugin that bundles a shared
 
 ## Performance
 
-Budget: under 0.5 ms for first use on 40 bundling plugins, served warm. Level 2 enforces it. Measure warm, from a long-running PHP process with opcache on. A fresh command-line run has neither and overstates the cost several times over.
+Budget: under 0.6 ms for first use on 40 bundling plugins, served warm, judged on the upper middle of ten runs. Level 2 enforces it. It measures about 0.5 ms; the spec says what each part costs and what was tried. Measure warm, from a long-running PHP process with opcache on. A fresh command-line run has neither and overstates the cost several times over.
 
 ## Testing
 

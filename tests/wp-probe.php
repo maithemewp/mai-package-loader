@@ -10,6 +10,12 @@
 
 $_REQUEST = json_decode( (string) getenv( 'PROBE_REQUEST' ), true ) ?: [];
 
+// A request for another site on the multisite network.
+if ( getenv( 'PROBE_SITE' ) ) {
+	$_SERVER['HTTP_HOST']   = 'localhost:8421';
+	$_SERVER['REQUEST_URI'] = getenv( 'PROBE_SITE' );
+}
+
 require getenv( 'WP' ) . '/wp-load.php';
 
 $check = $argv[1];
@@ -26,6 +32,25 @@ switch ( $check ) {
 
 	case 'dropin':
 		echo $GLOBALS['mai_demo_dropin'] ?? 'unset';
+		break;
+
+	case 'activate-eager':
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		Mai\Demo\Info::VERSION;
+		$result = activate_plugin( 'rrr-eager/rrr-eager.php' );
+		echo is_wp_error( $result ) ? $result->get_error_message() : ( $GLOBALS['mai_demo_eager'] ?? 'unset' );
+		break;
+
+	case 'reentry':
+		echo $GLOBALS['mai_demo_reentry'] ?? 'unset';
+		break;
+
+	case 'sunrise':
+		echo $GLOBALS['mai_demo_sunrise'] ?? 'unset';
+		break;
+
+	case 'theme':
+		echo $GLOBALS['mai_demo_theme'] ?? 'unset';
 		break;
 
 	case 'mu-early':

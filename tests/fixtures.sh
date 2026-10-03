@@ -7,24 +7,44 @@
 ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 
 # A copy of this loader, stamped with a version, to install from.
+#   make_loader <dir> <version> [takeover]
+# takeover: ship a takeover.php whose autoloader serves Mai\Demo\Info itself,
+# with VERSION 'takeover', so a test can see who answered.
 make_loader() {
 	local dir="$1" version="$2"
 	mkdir -p "$dir"
 	cp "${LOADER_INIT:-$ROOT/init.php}" "$dir/init.php"; cp "$ROOT/composer.json" "$dir/"
-	sed -i.bak "s/public const VERSION = '[^']*'/public const VERSION = '$version'/" "$dir/init.php"
+	sed -i.bak "s/^\([[:space:]]*\)public const VERSION = '[^']*';/\1public const VERSION = '$version';/" "$dir/init.php"
 	rm -f "$dir/init.php.bak"
+
+	if [ "${3:-}" = "takeover" ]; then
+		cat > "$dir/takeover.php" <<'PHP'
+<?php
+return static function ( string $class ): void {
+	if ( 'Mai\Demo\Info' === $class ) {
+		require __DIR__ . '/takeover-info.php';
+	}
+};
+PHP
+		printf "<?php\nnamespace Mai\\Demo;\nfinal class Info { public const VERSION = 'takeover'; }\n" > "$dir/takeover-info.php"
+	fi
+	return 0
 }
 
 # A namespaced shared library, Mai\Demo\, at a version.
 #   make_lib <dir> <version> [declaration]
-# declaration: ok (default), none, not-array, no-name, dev-version, missing-file
+# declaration: ok (default), none, not-array, no-name, dev-version, missing-file,
+#   beta-version, newline-version, wrong-package
 make_lib() {
-	local dir="$1" version="$2" declaration="${3:-ok}"
+	local dir="$1" version="$2" declaration="${3:-ok}" package="maithemewp/mai-demo"
 	mkdir -p "$dir/src/Sub"
+
+	# A library that copied mai-demo's declaration without renaming it.
+	[ "$declaration" = "wrong-package" ] && package="maithemewp/mai-other"
 
 	cat > "$dir/composer.json" <<JSON
 {
-	"name": "maithemewp/mai-demo",
+	"name": "$package",
 	"type": "library",
 	"require": { "maithemewp/mai-package-loader": "*" }
 }
@@ -47,7 +67,7 @@ final class Deep {
 PHP
 
 	case "$declaration" in
-		ok|missing-file)
+		ok|missing-file|wrong-package)
 			printf "<?php\nreturn [ 'name' => 'maithemewp/mai-demo', 'version' => '%s', 'namespace' => 'Mai\\\\\\\\Demo\\\\\\\\', 'path' => 'src' ];\n" "$version" > "$dir/mai-package.php"
 			if [ "$declaration" = "missing-file" ]; then
 				rm "$dir/src/Info.php"
@@ -56,6 +76,8 @@ PHP
 		not-array)   echo "<?php return 'nope';" > "$dir/mai-package.php" ;;
 		no-name)     printf "<?php\nreturn [ 'version' => '%s', 'namespace' => 'Mai\\\\\\\\Demo\\\\\\\\', 'path' => 'src' ];\n" "$version" > "$dir/mai-package.php" ;;
 		dev-version) printf "<?php\nreturn [ 'name' => 'maithemewp/mai-demo', 'version' => 'dev-develop', 'namespace' => 'Mai\\\\\\\\Demo\\\\\\\\', 'path' => 'src' ];\n" > "$dir/mai-package.php" ;;
+		beta-version) printf "<?php\nreturn [ 'name' => 'maithemewp/mai-demo', 'version' => '%s-beta', 'namespace' => 'Mai\\\\\\\\Demo\\\\\\\\', 'path' => 'src' ];\n" "$version" > "$dir/mai-package.php" ;;
+		newline-version) printf "<?php\nreturn [ 'name' => 'maithemewp/mai-demo', 'version' => \"%s\\\\n\", 'namespace' => 'Mai\\\\\\\\Demo\\\\\\\\', 'path' => 'src' ];\n" "$version" > "$dir/mai-package.php" ;;
 		none)        ;;
 	esac
 }

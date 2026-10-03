@@ -4,7 +4,7 @@ Loads the newest copy of each shared mai library, whichever plugin loads first.
 
 When several plugins bundle the same library, such as mai-cache, PHP can only load one copy of each class. Without this package, the copy that loads is whichever plugin WordPress happened to load first. A plugin built against a newer version can then call a method the older copy lacks, and the site fatals.
 
-This package finds every copy on the site, picks the newest of each library, and loads its classes from there. It works from the first moment any plugin uses a library, before most plugins have loaded. It costs about 0.4 ms on a site with 40 plugins that all bundle a library, and nothing on a page that uses none.
+This package finds every copy this request will load, picks the newest of each library, and loads its classes from there. It works from the first moment any plugin uses a library, before most plugins have loaded. It costs about 0.5 ms on a site with 40 plugins that all bundle a library, and nothing on a page that loads no `Mai\` or `Mai_` class.
 
 Why it works this way, the measurements, and every test: [`docs/specs/2026-10-03-mai-package-loader.md`](docs/specs/2026-10-03-mai-package-loader.md).
 
@@ -88,18 +88,30 @@ return [
 
 **The rules, and why:**
 
-- **Every class name starts with `Mai`.** Anything else is turned away before any work is done.
-- **The library is published under `maithemewp/`.** Only those packages are looked at.
-- **No Composer autoload of its own.** Composer's autoloader would otherwise serve whichever copy it reached first.
+- **Every class name starts with `Mai\` or `Mai_`.** Anything else is turned away before any work is done.
+- **The library is published under `maithemewp/`, and `name` is its Composer name.** Only those packages are looked at, and a declaration naming another package is skipped.
+- **No Composer autoload of its own.** Composer's autoloader would otherwise serve whichever copy it reached first. So no helper functions or constants either: a `files` entry only runs from the first plugin's copy.
 - **The version is plain numbers, like `0.6.0`.** A copy with any other version is skipped.
 - **The API only grows.** Every plugin on a site gets the newest copy, so an older plugin must still work against it.
 - **The first release on the loader is newer than every old copy** still on sites, so it wins wherever both exist.
 
 ## Limits
 
-**A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class, and the next one is right. That only happens in a drop-in such as `object-cache.php`, in a must-use plugin that uses it before a later must-use plugin loads, or on the request that activates a plugin, if the class loaded before that plugin did.
+**A class already loaded cannot be swapped.** If something uses a shared class before a newer copy is visible, that page load keeps the older class, and the next one is right. That only happens before WordPress has said what will load: in a drop-in such as `object-cache.php`, in multisite's `sunrise.php`, or in a must-use plugin that uses it before a later must-use plugin loads.
 
-**Inactive plugins are never used,** even if they hold a newer copy, and nothing in a request can change which folders are looked in.
+**Only what this request loads counts.** Inactive plugins, plugins WP-CLI skips and plugins recovery mode pauses are never used, even if they hold a newer copy, and nothing in a request can change which folders are looked in.
+
+**Using Strauss or PHP-Scoper in a plugin?** Exclude `maithemewp/*` from prefixing, or it renames this loader and starts a second one.
+
+## When a class is not found
+
+Every copy the loader skipped is listed with the reason:
+
+```php
+print_r( Mai_Package_Loader::rejected() );
+```
+
+With `WP_DEBUG` on, each is also logged to the debug log.
 
 ## Testing
 
