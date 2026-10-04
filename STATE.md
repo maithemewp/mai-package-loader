@@ -12,7 +12,7 @@ Consumers are on the new versions and pushed to `develop`: mai-analytics (releas
 ## Next
 
 1. Mike: push mai-publisher `develop`, and release consumers when ready.
-2. mai-engine moves to mai-cache `^0.6` in its beta.5 release step, Task 15 of `docs/plans/2026-10-01-grid-cache-beta-5.md`, already rewritten for it.
+2. Done 2026-10-04: mai-engine requires mai-cache `^0.6` with the loader (`68c81eacb` on its `develop`, not pushed), and ships with its beta.5 release.
 
 ## Blocked / waiting on
 
@@ -28,7 +28,6 @@ Expect "All checks passed" twice and "35 caught, 0 survived". `ONLY="name|name" 
 
 ## Gotchas
 
-- mai-engine's vendored mai-cache is a hand copy of 0.5.0 code, but its lock says v0.4.0, so a fresh `composer install` restores 0.4.0 and fatals on `unlock()` in `class-mai-query-cache.php:301`. The fix: require `^0.6`, add this repo's VCS entry, `composer update maithemewp/mai-cache maithemewp/mai-package-loader`, `composer dump-autoload --no-dev`, drop the `installed.php` gitignore line, and replace plan Task 7's hand copy and Task 15's `v0.5.0` tag. Fix the `Mai_Cache_Bootstrap` comments in `tests/phpunit/integration/plugin-loader.php` and `tests/phpunit/unit/bootstrap.php`.
 - Without `installed.php` the loader costs about 1.4 ms on 40 bundling plugins instead of 0.53 ms (0.25 ms against 0.11 ms with 5 bundling). Measured warm, see the spec's "Performance".
 - Strauss in mai-auth and mai-sportsdataio runs on every `composer update` and rewrites `vendor-prefixed` with the latest strauss.phar. Revert that unless you mean to change it.
 - Time performance warm, and on a quiet machine; the budget check retries up to three times.
