@@ -5,20 +5,18 @@ Updated: 2026-10-03 by Claude (Opus 5.5)
 
 Released. `v0.1.0` is tagged on `main` (c666181), and `main` and `develop` are pushed. mai-dom 1.1.0, mai-cache 0.6.0 and mai-logger 0.2.0 are tagged on it, and a fresh `composer install` from GitHub finds all three with nothing rejected.
 
-The last fix before tagging: every Mai plugin gitignored `vendor/composer/installed.php`, so production took the folder-listing path, where a newer loader could never take over. It now can. Mike decided the fleet commits `installed.php` from now on; deployable-guard enforces it (committed locally, not released).
+Every Mai plugin gitignored `vendor/composer/installed.php`, so production took the folder-listing path, where a newer loader could never take over. Fixed before tagging. Mike decided the fleet commits `installed.php` from now on, and deployable-guard v1.1.0 (`v1` moved to it) fails CI without it.
 
-Consumers moved to the new versions, each committed locally on its own branch, nothing pushed: mai-analytics, mai-auth, mai-reactions, mai-sportsdataio, springwire-publish-wp, balloon-juice-plugin, the balloon-juice and horizonwesthappenings themes, and mai-publisher (repository entry only).
+Consumers are on the new versions and pushed to `develop`: mai-analytics (released as 1.3.7), mai-auth, mai-reactions, mai-sportsdataio, springwire-publish-wp, balloon-juice-plugin and the balloon-juice theme. horizonwesthappenings is committed locally; it has no remote. mai-publisher requires mai-logger `^0.2` directly with mai-analytics 1.3.7, committed locally (4c5c6b1), not pushed.
 
 ## Next
 
-1. Mike: push and tag deployable-guard (`v1.1.0`, and move `v1`, which every plugin's CI pins).
-2. Mike: push each consumer, and release them when ready.
-3. mai-engine to mai-cache `^0.6`, inside its beta.5 plan's release step (Task 15), once the other session's verification on eurweb is done. Steps in "Gotchas".
-4. mai-publisher moves to mai-logger 0.2 after a mai-analytics release that requires `^0.2`: `composer update maithemewp/mai-analytics maithemewp/mai-logger maithemewp/mai-package-loader`.
+1. Mike: push mai-publisher `develop`, and release consumers when ready.
+2. mai-engine moves to mai-cache `^0.6` in its beta.5 release step, Task 15 of `docs/plans/2026-10-01-grid-cache-beta-5.md`, already rewritten for it.
 
 ## Blocked / waiting on
 
-Mike, for every push and release above.
+Mike, for the push and releases above.
 
 ## Verify
 
